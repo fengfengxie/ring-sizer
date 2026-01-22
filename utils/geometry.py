@@ -31,8 +31,99 @@ def estimate_finger_axis(
         - palm_end: Palm-side endpoint
         - tip_end: Fingertip endpoint
     """
-    # TODO: Implement in Phase 5
-    raise NotImplementedError("Axis estimation will be implemented in Phase 5")
+    # Get all non-zero points in the mask
+    points = np.column_stack(np.where(mask > 0))  # Returns (row, col) i.e., (y, x)
+    points = points[:, [1, 0]]  # Convert to (x, y) format
+
+    if len(points) < 10:
+        raise ValueError("Not enough points in mask for axis estimation")
+
+    # Calculate center (centroid)
+    center = np.mean(points, axis=0)
+
+    # Center the points
+    centered = points - center
+
+    # Compute covariance matrix
+    cov = np.cov(centered.T)
+
+    # Compute eigenvalues and eigenvectors
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+
+    # Principal axis is the eigenvector with largest eigenvalue
+    principal_idx = np.argmax(eigenvalues)
+    direction = eigenvectors[:, principal_idx]
+
+    # Ensure direction is a unit vector
+    direction = direction / np.linalg.norm(direction)
+
+    # Project all points onto the principal axis to find endpoints
+    projections = np.dot(centered, direction)
+    min_proj = np.min(projections)
+    max_proj = np.max(projections)
+
+    # Calculate finger length
+    length = max_proj - min_proj
+
+    # Calculate endpoints along the axis
+    endpoint1 = center + direction * min_proj
+    endpoint2 = center + direction * max_proj
+
+    # Determine which endpoint is palm vs tip
+    # If landmarks are provided, use them for orientation
+    if landmarks is not None and len(landmarks) == 4:
+        # landmarks[0] is MCP (palm side), landmarks[3] is tip
+        base_point = landmarks[0]
+        tip_point = landmarks[3]
+
+        # Determine which endpoint is closer to the base
+        dist1_to_base = np.linalg.norm(endpoint1 - base_point)
+        dist2_to_base = np.linalg.norm(endpoint2 - base_point)
+
+        if dist1_to_base < dist2_to_base:
+            palm_end = endpoint1
+            tip_end = endpoint2
+        else:
+            palm_end = endpoint2
+            tip_end = endpoint1
+            direction = -direction  # Flip direction to point from palm to tip
+    else:
+        # Without landmarks, use heuristic: tip is usually thinner
+        # Sample points near each endpoint
+        sample_distance = length * 0.1
+
+        # Points near endpoint1
+        near_ep1 = points[np.abs(projections - min_proj) < sample_distance]
+        # Points near endpoint2
+        near_ep2 = points[np.abs(projections - max_proj) < sample_distance]
+
+        # Calculate average distance from axis for each end (proxy for thickness)
+        if len(near_ep1) > 0 and len(near_ep2) > 0:
+            # Project distances perpendicular to axis
+            perp_direction = np.array([-direction[1], direction[0]])
+            dist1 = np.mean(np.abs(np.dot(near_ep1 - center, perp_direction)))
+            dist2 = np.mean(np.abs(np.dot(near_ep2 - center, perp_direction)))
+
+            # Thinner end is likely the tip
+            if dist1 < dist2:
+                palm_end = endpoint2
+                tip_end = endpoint1
+                direction = -direction
+            else:
+                palm_end = endpoint1
+                tip_end = endpoint2
+        else:
+            # Fallback: assume endpoint2 is tip (positive direction)
+            palm_end = endpoint1
+            tip_end = endpoint2
+
+    return {
+        "center": center.astype(np.float32),
+        "direction": direction.astype(np.float32),
+        "length": float(length),
+        "palm_end": palm_end.astype(np.float32),
+        "tip_end": tip_end.astype(np.float32),
+    }
 
 
 def localize_ring_zone(

@@ -207,3 +207,46 @@ Phase 5: Finger Contour & Axis Estimation
    - Added `clean_mask` and `get_finger_contour` to public exports
 
 ---
+
+## Phase 5: Finger Contour & Axis Estimation ✅
+
+**Status:** Completed
+**Date:** 2026-01-23
+
+### Completed Tasks
+
+1. **PCA-Based Axis Estimation** (`utils/geometry.py`)
+   - Implemented `estimate_finger_axis()` using Principal Component Analysis
+   - Extracts principal axis from finger mask points
+   - Calculates center, direction vector, and finger length
+   - Identifies palm-side and fingertip endpoints
+
+2. **Finger Orientation Detection**
+   - Uses landmarks (MCP to tip) when available for accurate orientation
+   - Falls back to geometric heuristic: thinner end is tip
+   - Ensures direction vector points from palm to fingertip
+
+3. **Pipeline Integration** (`measure_finger.py`)
+   - Integrated axis estimation into main measurement pipeline
+   - Added error handling for axis estimation failures
+   - Console output shows axis length and center point
+
+### Testing Results
+
+| Image | Axis Length | Center Point | Status |
+|-------|-------------|--------------|--------|
+| test_2.jpg | 2134.4 px | (2131, 2839) | ✓ |
+| test_3.jpg | 2154.1 px | (995, 2865) | ✓ |
+
+### Technical Details
+
+- **PCA Method**: Computes covariance matrix of mask points, extracts principal eigenvector
+- **Projection**: Projects all points onto axis to find min/max extents
+- **Orientation**: Compares endpoints to landmark positions or analyzes thickness at ends
+- **Output Format**: Returns center, direction, length, palm_end, tip_end as numpy arrays
+
+### Next Phase
+
+Phase 6: Ring-Wearing Zone Localization
+
+---

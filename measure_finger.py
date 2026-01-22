@@ -21,6 +21,7 @@ import numpy as np
 from utils.image_quality import assess_image_quality
 from utils.card_detection import detect_credit_card, compute_scale_factor
 from utils.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
+from utils.geometry import estimate_finger_axis
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -276,8 +277,25 @@ def measure_finger(
 
     print(f"Finger contour extracted: {len(contour)} points")
 
+    # Phase 5: Estimate finger axis using PCA
+    try:
+        axis_data = estimate_finger_axis(
+            mask=cleaned_mask,
+            landmarks=finger_data.get("landmarks"),
+        )
+        print(f"Finger axis estimated: length={axis_data['length']:.1f}px, "
+              f"center=({axis_data['center'][0]:.0f}, {axis_data['center'][1]:.0f})")
+    except Exception as e:
+        print(f"Failed to estimate finger axis: {e}")
+        return create_output(
+            card_detected=True,
+            finger_detected=True,
+            scale_px_per_cm=px_per_cm,
+            view_angle_ok=view_angle_ok,
+            fail_reason="axis_estimation_failed",
+        )
+
     # TODO: Implement remaining pipeline in subsequent phases
-    # Phase 5: Finger contour & axis estimation
     # Phase 6: Ring-wearing zone localization
     # Phase 7: Width measurement
     # Phase 8: Confidence scoring
@@ -289,7 +307,7 @@ def measure_finger(
         finger_detected=True,
         scale_px_per_cm=px_per_cm,
         view_angle_ok=view_angle_ok,
-        fail_reason="Pipeline not yet implemented. Coming in Phase 5-9.",
+        fail_reason="Pipeline not yet implemented. Coming in Phase 6-9.",
     )
 
 
