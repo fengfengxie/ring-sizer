@@ -17,10 +17,14 @@ ENV/
 # Project outputs (keep structure, ignore contents)
 outputs/*.json
 outputs/*.png
+outputs/*.jpg
 outputs/intermediate/
 
+# Downloaded models (auto-downloaded on first run)
+models/*.task
+
 # Test artifacts
-samples/test.jpg
+samples/test*.jpg
 
 # OS
 .DS_Store

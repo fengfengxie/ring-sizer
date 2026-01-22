@@ -20,6 +20,7 @@ import numpy as np
 
 from utils.image_quality import assess_image_quality
 from utils.card_detection import detect_credit_card, compute_scale_factor
+from utils.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -216,8 +217,66 @@ def measure_finger(
     # Check for excessive perspective distortion (view angle)
     view_angle_ok = scale_confidence > 0.9
 
-    # TODO: Implement remaining pipeline in subsequent phases
     # Phase 4: Hand & finger segmentation
+    hand_data = segment_hand(image)
+
+    if hand_data is None:
+        print("No hand detected in image")
+        return create_output(
+            card_detected=True,
+            finger_detected=False,
+            scale_px_per_cm=px_per_cm,
+            view_angle_ok=view_angle_ok,
+            fail_reason="hand_not_detected",
+        )
+
+    print(f"Hand detected: {hand_data['handedness']}, confidence={hand_data['confidence']:.2f}")
+
+    # Isolate the target finger
+    h, w = image.shape[:2]
+    finger_data = isolate_finger(hand_data, finger=finger_index, image_shape=(h, w))
+
+    if finger_data is None:
+        print(f"Could not isolate finger: {finger_index}")
+        return create_output(
+            card_detected=True,
+            finger_detected=False,
+            scale_px_per_cm=px_per_cm,
+            view_angle_ok=view_angle_ok,
+            fail_reason="finger_isolation_failed",
+        )
+
+    print(f"Finger isolated: {finger_data['finger_name']}")
+
+    # Clean the finger mask
+    cleaned_mask = clean_mask(finger_data["mask"])
+
+    if cleaned_mask is None:
+        print("Finger mask too small or invalid")
+        return create_output(
+            card_detected=True,
+            finger_detected=False,
+            scale_px_per_cm=px_per_cm,
+            view_angle_ok=view_angle_ok,
+            fail_reason="finger_mask_too_small",
+        )
+
+    # Extract finger contour
+    contour = get_finger_contour(cleaned_mask)
+
+    if contour is None:
+        print("Could not extract finger contour")
+        return create_output(
+            card_detected=True,
+            finger_detected=False,
+            scale_px_per_cm=px_per_cm,
+            view_angle_ok=view_angle_ok,
+            fail_reason="contour_extraction_failed",
+        )
+
+    print(f"Finger contour extracted: {len(contour)} points")
+
+    # TODO: Implement remaining pipeline in subsequent phases
     # Phase 5: Finger contour & axis estimation
     # Phase 6: Ring-wearing zone localization
     # Phase 7: Width measurement
@@ -227,9 +286,10 @@ def measure_finger(
     # For now, return a placeholder indicating not implemented
     return create_output(
         card_detected=True,
+        finger_detected=True,
         scale_px_per_cm=px_per_cm,
         view_angle_ok=view_angle_ok,
-        fail_reason="Pipeline not yet implemented. Coming in Phase 4-9.",
+        fail_reason="Pipeline not yet implemented. Coming in Phase 5-9.",
     )
 
 

@@ -136,3 +136,56 @@ Phase 3: Credit Card Detection & Scale Calibration
 Phase 4: Hand & Finger Segmentation
 
 ---
+
+## Phase 4: Hand & Finger Segmentation ✅
+
+**Status:** Completed
+**Date:** 2026-01-22
+
+### Completed Tasks
+
+1. **MediaPipe Integration** (`utils/finger_segmentation.py`)
+   - Hand Landmarker task-based API (MediaPipe 0.10.31)
+   - Auto-download model on first use
+   - Multi-rotation detection for various image orientations
+   - Handles images up to 1280px (resizes larger images)
+
+2. **Hand Mask Generation**
+   - Convex hull from 21 landmarks
+   - Individual finger region filling
+   - Morphological smoothing (close + open)
+
+3. **Finger Isolation**
+   - Landmark mapping: index(5-8), middle(9-12), ring(13-16), pinky(17-20)
+   - Auto-detection selects most extended finger
+   - Extension scoring based on length and straightness
+   - Width estimation from inter-finger MCP distances
+
+4. **Mask Cleaning**
+   - Largest connected component extraction
+   - Morphological smoothing
+   - Gaussian blur edge smoothing
+   - Minimum area validation
+
+5. **Contour Extraction**
+   - External contour finding
+   - Optional smoothing via polygon approximation
+
+### Testing Results
+
+| Image | Hand | Finger | Contour Points |
+|-------|------|--------|----------------|
+| test_2.jpg | Right (0.89) | middle | 9 |
+| test_3.jpg | Right (0.94) | middle | 8 |
+
+### Notes
+
+- Original test.jpg had detection issues (partial hand/unusual orientation)
+- Best results with full hand visible, fingers extended
+- Rotation auto-detection handles portrait/landscape orientations
+
+### Next Phase
+
+Phase 5: Finger Contour & Axis Estimation
+
+---
