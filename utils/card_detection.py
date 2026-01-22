@@ -142,6 +142,11 @@ def score_card_candidate(
         return 0.0, details
 
     # Calculate aspect ratio (always use larger/smaller for consistency)
+    # Safeguard against zero dimensions
+    if width <= 0 or height <= 0:
+        details["reject_reason"] = "invalid_dimensions"
+        return 0.0, details
+
     if width > height:
         aspect_ratio = width / height
     else:

@@ -43,7 +43,6 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/han
 
 # Initialize MediaPipe Hands (lazy loading)
 _hands_detector = None
-_detector_initialized = False
 
 
 def _download_model():

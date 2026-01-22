@@ -189,3 +189,21 @@ Phase 4: Hand & Finger Segmentation
 Phase 5: Finger Contour & Axis Estimation
 
 ---
+
+## Code Cleanup (Post Phase 4)
+
+**Status:** Completed
+**Date:** 2026-01-22
+
+### Changes Made
+
+1. **Removed unused variable** (`utils/finger_segmentation.py`)
+   - Deleted `_detector_initialized` flag that was never used
+
+2. **Added divide-by-zero safeguard** (`utils/card_detection.py`)
+   - Added validation for zero/negative dimensions in `score_card_candidate()`
+
+3. **Updated module exports** (`utils/__init__.py`)
+   - Added `clean_mask` and `get_finger_contour` to public exports
+
+---
