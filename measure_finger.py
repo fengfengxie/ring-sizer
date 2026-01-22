@@ -21,7 +21,7 @@ import numpy as np
 from utils.image_quality import assess_image_quality
 from utils.card_detection import detect_credit_card, compute_scale_factor
 from utils.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
-from utils.geometry import estimate_finger_axis
+from utils.geometry import estimate_finger_axis, localize_ring_zone
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -295,8 +295,23 @@ def measure_finger(
             fail_reason="axis_estimation_failed",
         )
 
+    # Phase 6: Localize ring-wearing zone
+    try:
+        zone_data = localize_ring_zone(axis_data)
+        zone_length_cm = zone_data["length"] / px_per_cm
+        print(f"Ring zone localized: {zone_data['start_pct']*100:.0f}%-{zone_data['end_pct']*100:.0f}% "
+              f"from palm, length={zone_data['length']:.1f}px ({zone_length_cm:.2f}cm)")
+    except Exception as e:
+        print(f"Failed to localize ring zone: {e}")
+        return create_output(
+            card_detected=True,
+            finger_detected=True,
+            scale_px_per_cm=px_per_cm,
+            view_angle_ok=view_angle_ok,
+            fail_reason="zone_localization_failed",
+        )
+
     # TODO: Implement remaining pipeline in subsequent phases
-    # Phase 6: Ring-wearing zone localization
     # Phase 7: Width measurement
     # Phase 8: Confidence scoring
     # Phase 9: Debug visualization
@@ -307,7 +322,7 @@ def measure_finger(
         finger_detected=True,
         scale_px_per_cm=px_per_cm,
         view_angle_ok=view_angle_ok,
-        fail_reason="Pipeline not yet implemented. Coming in Phase 6-9.",
+        fail_reason="Pipeline not yet implemented. Coming in Phase 7-9.",
     )
 
 

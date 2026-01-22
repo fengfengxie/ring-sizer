@@ -146,8 +146,35 @@ def localize_ring_zone(
         - center_point: Zone center position
         - length: Zone length in pixels
     """
-    # TODO: Implement in Phase 6
-    raise NotImplementedError("Zone localization will be implemented in Phase 6")
+    # Extract axis information
+    palm_end = axis_data["palm_end"]
+    tip_end = axis_data["tip_end"]
+    direction = axis_data["direction"]
+    finger_length = axis_data["length"]
+
+    # Calculate zone positions along the axis
+    # Start at zone_start_pct from palm end
+    start_distance = finger_length * zone_start_pct
+    start_point = palm_end + direction * start_distance
+
+    # End at zone_end_pct from palm end
+    end_distance = finger_length * zone_end_pct
+    end_point = palm_end + direction * end_distance
+
+    # Calculate zone center
+    center_point = (start_point + end_point) / 2.0
+
+    # Zone length
+    zone_length = end_distance - start_distance
+
+    return {
+        "start_point": start_point.astype(np.float32),
+        "end_point": end_point.astype(np.float32),
+        "center_point": center_point.astype(np.float32),
+        "length": float(zone_length),
+        "start_pct": zone_start_pct,
+        "end_pct": zone_end_pct,
+    }
 
 
 def compute_cross_section_width(
