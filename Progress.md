@@ -85,3 +85,54 @@ Phase 2: Image Quality Assessment (blur detection, exposure/contrast checks)
 Phase 3: Credit Card Detection & Scale Calibration
 
 ---
+
+## Phase 3: Credit Card Detection & Scale Calibration ✅
+
+**Status:** Completed
+**Date:** 2026-01-22
+
+### Completed Tasks
+
+1. **Card Contour Detection** (`utils/card_detection.py`)
+   - Multiple detection strategies: Canny edge, adaptive threshold, Otsu, color-based
+   - Bilateral filtering for noise reduction
+   - Quadrilateral extraction with flexible polygon approximation
+   - Robust handling of rounded corners and metallic surfaces
+
+2. **Aspect Ratio Verification**
+   - Standard credit card ratio: 1.586 (85.60mm × 53.98mm)
+   - Tolerance: ±15% deviation allowed
+   - Handles both portrait and landscape orientations
+
+3. **Corner Ordering & Perspective Analysis**
+   - Consistent corner ordering: TL, TR, BR, BL
+   - Corner angle validation (90° ± 25°)
+   - Convexity check
+   - Perspective rectification ready
+
+4. **Scale Factor Calculation**
+   - Computes px_per_cm from detected card dimensions
+   - Consistency-based confidence scoring
+   - Supports both card orientations
+
+5. **Candidate Scoring System**
+   - Multi-factor scoring: area (40%), aspect ratio (30%), angles (30%)
+   - Minimum score threshold: 0.3
+
+### Testing Results
+
+| Metric | Value |
+|--------|-------|
+| Card detected | ✓ |
+| Detected dimensions | 1571 × 2519 px (portrait) |
+| Aspect ratio | 1.603 (expected: 1.586) |
+| Detection confidence | 0.96 |
+| Scale factor | 292.65 px/cm |
+| Scale confidence | 0.99 |
+| Computed card size | 5.37 × 8.61 cm (actual: 5.40 × 8.56 cm) |
+
+### Next Phase
+
+Phase 4: Hand & Finger Segmentation
+
+---

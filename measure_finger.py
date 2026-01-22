@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from utils.image_quality import assess_image_quality
+from utils.card_detection import detect_credit_card, compute_scale_factor
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -144,13 +145,13 @@ def create_output(
         Output dictionary matching PRD specification
     """
     return {
-        "finger_outer_diameter_cm": finger_diameter_cm,
-        "confidence": round(confidence, 3),
-        "scale_px_per_cm": round(scale_px_per_cm, 2) if scale_px_per_cm else None,
+        "finger_outer_diameter_cm": float(finger_diameter_cm) if finger_diameter_cm is not None else None,
+        "confidence": float(round(confidence, 3)),
+        "scale_px_per_cm": round(float(scale_px_per_cm), 2) if scale_px_per_cm is not None else None,
         "quality_flags": {
-            "card_detected": card_detected,
-            "finger_detected": finger_detected,
-            "view_angle_ok": view_angle_ok,
+            "card_detected": bool(card_detected),
+            "finger_detected": bool(finger_detected),
+            "view_angle_ok": bool(view_angle_ok),
         },
         "fail_reason": fail_reason,
     }
@@ -196,8 +197,26 @@ def measure_finger(
             print(f"  Warning: {issue}")
         return create_output(fail_reason=quality["fail_reason"])
 
-    # TODO: Implement remaining pipeline in subsequent phases
     # Phase 3: Credit card detection & scale calibration
+    card_result = detect_credit_card(image)
+
+    if card_result is None:
+        print("Credit card not detected in image")
+        return create_output(
+            card_detected=False,
+            fail_reason="card_not_detected",
+        )
+
+    # Compute scale factor
+    px_per_cm, scale_confidence = compute_scale_factor(card_result["corners"])
+    print(f"Card detected: {card_result['width_px']:.0f}x{card_result['height_px']:.0f}px, "
+          f"aspect={card_result['aspect_ratio']:.3f}, confidence={card_result['confidence']:.2f}")
+    print(f"Scale: {px_per_cm:.2f} px/cm (confidence={scale_confidence:.2f})")
+
+    # Check for excessive perspective distortion (view angle)
+    view_angle_ok = scale_confidence > 0.9
+
+    # TODO: Implement remaining pipeline in subsequent phases
     # Phase 4: Hand & finger segmentation
     # Phase 5: Finger contour & axis estimation
     # Phase 6: Ring-wearing zone localization
@@ -207,7 +226,10 @@ def measure_finger(
 
     # For now, return a placeholder indicating not implemented
     return create_output(
-        fail_reason="Pipeline not yet implemented. Coming in Phase 3-9.",
+        card_detected=True,
+        scale_px_per_cm=px_per_cm,
+        view_angle_ok=view_angle_ok,
+        fail_reason="Pipeline not yet implemented. Coming in Phase 4-9.",
     )
 
 
