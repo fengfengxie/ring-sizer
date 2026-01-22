@@ -198,9 +198,67 @@ def compute_cross_section_width(
         - sample_points: List of (left, right) intersection points
         - median_width_px: Median width in pixels
         - std_width_px: Standard deviation of widths
+        - mean_width_px: Mean width in pixels
     """
-    # TODO: Implement in Phase 7
-    raise NotImplementedError("Width measurement will be implemented in Phase 7")
+    direction = axis_data["direction"]
+    start_point = zone_data["start_point"]
+    end_point = zone_data["end_point"]
+
+    # Perpendicular direction (rotate 90 degrees)
+    perp_direction = np.array([-direction[1], direction[0]], dtype=np.float32)
+
+    widths = []
+    sample_points_list = []
+
+    # Generate sample points along the zone
+    for i in range(num_samples):
+        # Interpolate between start and end
+        t = i / (num_samples - 1) if num_samples > 1 else 0.5
+        sample_center = start_point + t * (end_point - start_point)
+
+        # Find intersections with contour along perpendicular line
+        intersections = line_contour_intersections(
+            contour, sample_center, perp_direction
+        )
+
+        if len(intersections) >= 2:
+            # Convert to numpy array for distance calculations
+            pts = np.array(intersections)
+
+            # Find the two points that are farthest apart
+            # This handles cases where the line intersects multiple times
+            max_dist = 0
+            best_pair = None
+
+            for j in range(len(pts)):
+                for k in range(j + 1, len(pts)):
+                    dist = np.linalg.norm(pts[j] - pts[k])
+                    if dist > max_dist:
+                        max_dist = dist
+                        best_pair = (pts[j], pts[k])
+
+            if best_pair is not None:
+                widths.append(max_dist)
+                sample_points_list.append(best_pair)
+
+    if len(widths) == 0:
+        raise ValueError("No valid width measurements found in ring zone")
+
+    widths = np.array(widths)
+
+    # Calculate statistics
+    median_width = float(np.median(widths))
+    mean_width = float(np.mean(widths))
+    std_width = float(np.std(widths))
+
+    return {
+        "widths_px": widths.tolist(),
+        "sample_points": sample_points_list,
+        "median_width_px": median_width,
+        "mean_width_px": mean_width,
+        "std_width_px": std_width,
+        "num_samples": len(widths),
+    }
 
 
 def line_contour_intersections(
@@ -219,5 +277,48 @@ def line_contour_intersections(
     Returns:
         List of intersection points
     """
-    # TODO: Implement in Phase 7
-    raise NotImplementedError("Line intersection will be implemented in Phase 7")
+    intersections = []
+
+    # Normalize direction
+    direction = np.array(direction, dtype=np.float32)
+    direction = direction / (np.linalg.norm(direction) + 1e-8)
+
+    point = np.array(point, dtype=np.float32)
+
+    # Check each edge of the contour
+    n = len(contour)
+    for i in range(n):
+        p1 = contour[i]
+        p2 = contour[(i + 1) % n]
+
+        # Find intersection between line and edge segment
+        # Line: P = point + t * direction
+        # Segment: Q = p1 + s * (p2 - p1), where s ∈ [0, 1]
+
+        edge_vec = p2 - p1
+
+        # Solve: point + t * direction = p1 + s * edge_vec
+        # Rearranged: t * direction - s * edge_vec = p1 - point
+
+        # Create matrix [direction, -edge_vec] * [t, s]^T = p1 - point
+        A = np.column_stack([direction, -edge_vec])
+        b = p1 - point
+
+        # Check if matrix is singular (parallel lines)
+        det = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
+        if abs(det) < 1e-8:
+            continue
+
+        # Solve for t and s
+        try:
+            params = np.linalg.solve(A, b)
+            t, s = params[0], params[1]
+
+            # Check if intersection is on the edge segment (s ∈ [0, 1])
+            if 0 <= s <= 1:
+                intersection = point + t * direction
+                intersections.append(tuple(intersection))
+        except np.linalg.LinAlgError:
+            continue
+
+    return intersections

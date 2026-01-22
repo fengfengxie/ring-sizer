@@ -21,7 +21,7 @@ import numpy as np
 from utils.image_quality import assess_image_quality
 from utils.card_detection import detect_credit_card, compute_scale_factor
 from utils.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
-from utils.geometry import estimate_finger_axis, localize_ring_zone
+from utils.geometry import estimate_finger_axis, localize_ring_zone, compute_cross_section_width
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -311,18 +311,54 @@ def measure_finger(
             fail_reason="zone_localization_failed",
         )
 
+    # Phase 7: Measure finger width at ring zone
+    try:
+        width_data = compute_cross_section_width(
+            contour=contour,
+            axis_data=axis_data,
+            zone_data=zone_data,
+            num_samples=20,
+        )
+
+        # Convert to centimeters
+        median_width_cm = width_data["median_width_px"] / px_per_cm
+        mean_width_cm = width_data["mean_width_px"] / px_per_cm
+        std_width_cm = width_data["std_width_px"] / px_per_cm
+
+        print(f"Width measured: {width_data['num_samples']} samples, "
+              f"median={median_width_cm:.2f}cm, std={std_width_cm:.3f}cm")
+
+        # Sanity check: finger width should be in realistic range (1.4-2.4 cm)
+        if median_width_cm < 1.0 or median_width_cm > 3.0:
+            print(f"Warning: Measured width {median_width_cm:.2f}cm is outside realistic range")
+
+    except Exception as e:
+        print(f"Failed to measure finger width: {e}")
+        return create_output(
+            card_detected=True,
+            finger_detected=True,
+            scale_px_per_cm=px_per_cm,
+            view_angle_ok=view_angle_ok,
+            fail_reason="width_measurement_failed",
+        )
+
     # TODO: Implement remaining pipeline in subsequent phases
-    # Phase 7: Width measurement
     # Phase 8: Confidence scoring
     # Phase 9: Debug visualization
 
-    # For now, return a placeholder indicating not implemented
+    # For now, return measurement with basic confidence
+    # Confidence based on measurement variance
+    variance_score = max(0, 1.0 - (std_width_cm / median_width_cm) * 2.0)
+    basic_confidence = (card_result['confidence'] + scale_confidence + variance_score) / 3.0
+
     return create_output(
+        finger_diameter_cm=median_width_cm,
+        confidence=basic_confidence,
         card_detected=True,
         finger_detected=True,
         scale_px_per_cm=px_per_cm,
         view_angle_ok=view_angle_ok,
-        fail_reason="Pipeline not yet implemented. Coming in Phase 7-9.",
+        fail_reason=None,
     )
 
 
