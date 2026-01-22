@@ -18,6 +18,8 @@ from typing import Optional, Dict, Any, Literal
 import cv2
 import numpy as np
 
+from utils.image_quality import assess_image_quality
+
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
 
@@ -183,8 +185,18 @@ def measure_finger(
     Returns:
         Output dictionary with measurement results
     """
-    # TODO: Implement full pipeline in subsequent phases
     # Phase 2: Image quality check
+    quality = assess_image_quality(image)
+    print(f"Image quality: blur={quality['blur_score']:.1f}, "
+          f"brightness={quality['brightness']:.1f}, "
+          f"contrast={quality['contrast']:.1f}")
+
+    if not quality["passed"]:
+        for issue in quality["issues"]:
+            print(f"  Warning: {issue}")
+        return create_output(fail_reason=quality["fail_reason"])
+
+    # TODO: Implement remaining pipeline in subsequent phases
     # Phase 3: Credit card detection & scale calibration
     # Phase 4: Hand & finger segmentation
     # Phase 5: Finger contour & axis estimation
@@ -195,7 +207,7 @@ def measure_finger(
 
     # For now, return a placeholder indicating not implemented
     return create_output(
-        fail_reason="Pipeline not yet implemented. Coming in Phase 2-9.",
+        fail_reason="Pipeline not yet implemented. Coming in Phase 3-9.",
     )
 
 

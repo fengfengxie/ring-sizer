@@ -42,3 +42,46 @@
 Phase 2: Image Quality Assessment (blur detection, exposure/contrast checks)
 
 ---
+
+## Phase 2: Image Quality Assessment ✅
+
+**Status:** Completed
+**Date:** 2026-01-22
+
+### Completed Tasks
+
+1. **Blur Detection** (`utils/image_quality.py`)
+   - Laplacian variance method for focus quality
+   - Threshold: 50.0 (tuned for images with flat backgrounds)
+   - Returns blur score and pass/fail flag
+
+2. **Exposure/Contrast Check**
+   - Histogram-based brightness analysis
+   - Underexposure detection (brightness < 40)
+   - Overexposure detection (brightness > 220)
+   - Contrast check (std dev >= 30)
+
+3. **Resolution Check**
+   - Minimum dimension validation (720px default)
+   - Width/height reporting
+
+4. **Quality Pipeline Integration**
+   - `assess_image_quality()` combines all checks
+   - Early exit with descriptive failure reasons
+   - Integrated into main `measure_finger()` pipeline
+
+### Testing Results
+
+| Test Case | Result |
+|-----------|--------|
+| Random noise (sharp) | blur_score=107280, is_sharp=True ✓ |
+| Uniform gray (blurry) | blur_score=0, is_sharp=False ✓ |
+| Dark image | underexposed=True ✓ |
+| Bright image | overexposed=True ✓ |
+| Real sample (test.jpg) | passed=True, blur=98.5, brightness=148.1 ✓ |
+
+### Next Phase
+
+Phase 3: Credit Card Detection & Scale Calibration
+
+---
