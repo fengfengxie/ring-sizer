@@ -22,6 +22,13 @@ from utils.image_quality import assess_image_quality
 from utils.card_detection import detect_credit_card, compute_scale_factor
 from utils.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
 from utils.geometry import estimate_finger_axis, localize_ring_zone, compute_cross_section_width
+from utils.confidence import (
+    compute_card_confidence,
+    compute_finger_confidence,
+    compute_measurement_confidence,
+    compute_overall_confidence,
+)
+from utils.visualization import create_debug_visualization
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -342,18 +349,51 @@ def measure_finger(
             fail_reason="width_measurement_failed",
         )
 
-    # TODO: Implement remaining pipeline in subsequent phases
-    # Phase 8: Confidence scoring
-    # Phase 9: Debug visualization
+    # Phase 8: Comprehensive confidence scoring
+    # Calculate component confidences
+    card_conf = compute_card_confidence(card_result, scale_confidence)
 
-    # For now, return measurement with basic confidence
-    # Confidence based on measurement variance
-    variance_score = max(0, 1.0 - (std_width_cm / median_width_cm) * 2.0)
-    basic_confidence = (card_result['confidence'] + scale_confidence + variance_score) / 3.0
+    # Calculate mask area for finger confidence
+    mask_area = np.sum(cleaned_mask > 0)
+    image_area = image.shape[0] * image.shape[1]
+    finger_conf = compute_finger_confidence(hand_data, finger_data, mask_area, image_area)
+
+    # Calculate measurement confidence
+    measurement_conf = compute_measurement_confidence(width_data, median_width_cm)
+
+    # Compute overall confidence
+    confidence_breakdown = compute_overall_confidence(
+        card_conf, finger_conf, measurement_conf
+    )
+
+    print(f"Confidence: {confidence_breakdown['overall']:.3f} ({confidence_breakdown['level']}) "
+          f"[card={confidence_breakdown['card']:.2f}, "
+          f"finger={confidence_breakdown['finger']:.2f}, "
+          f"measurement={confidence_breakdown['measurement']:.2f}]")
+
+    # Phase 9: Debug visualization
+    if debug_path is not None:
+        print(f"Generating debug visualization...")
+        debug_image = create_debug_visualization(
+            image=image,
+            card_result=card_result,
+            contour=contour,
+            axis_data=axis_data,
+            zone_data=zone_data,
+            width_data=width_data,
+            measurement_cm=median_width_cm,
+            confidence=confidence_breakdown['overall'],
+            scale_px_per_cm=px_per_cm,
+        )
+
+        # Save debug image
+        Path(debug_path).parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(debug_path, debug_image)
+        print(f"Debug visualization saved to: {debug_path}")
 
     return create_output(
         finger_diameter_cm=median_width_cm,
-        confidence=basic_confidence,
+        confidence=confidence_breakdown['overall'],
         card_detected=True,
         finger_detected=True,
         scale_px_per_cm=px_per_cm,
