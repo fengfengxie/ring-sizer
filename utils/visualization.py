@@ -93,15 +93,15 @@ def draw_card_overlay(
     # Draw corner points with labels
     corner_labels = ["TL", "TR", "BR", "BL"]
     for i, (corner, label) in enumerate(zip(corners, corner_labels)):
-        cv2.circle(image, tuple(corner), 12, (0, 255, 0), -1)
+        cv2.circle(image, tuple(corner), 15, (0, 255, 0), -1)
         cv2.putText(
             image,
             label,
-            tuple(corner + np.array([15, -15])),
+            tuple(corner + np.array([20, -20])),
             cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
+            1.5,
             (0, 255, 0),
-            3,
+            4,
         )
 
     # Add scale annotation
@@ -113,9 +113,9 @@ def draw_card_overlay(
             text,
             tuple(center),
             cv2.FONT_HERSHEY_SIMPLEX,
-            1.2,
+            1.8,
             (0, 255, 0),
-            3,
+            4,
         )
 
     return image
@@ -143,27 +143,27 @@ def draw_finger_axis(
     cv2.line(image, tuple(palm_end), tuple(tip_end), (255, 255, 0), 4)
 
     # Mark endpoints
-    cv2.circle(image, tuple(palm_end), 10, (0, 255, 255), -1)
-    cv2.circle(image, tuple(tip_end), 10, (255, 128, 0), -1)
+    cv2.circle(image, tuple(palm_end), 15, (0, 255, 255), -1)
+    cv2.circle(image, tuple(tip_end), 15, (255, 128, 0), -1)
 
     # Add labels
     cv2.putText(
         image,
         "Palm",
-        tuple(palm_end + np.array([15, 15])),
+        tuple(palm_end + np.array([25, 25])),
         cv2.FONT_HERSHEY_SIMPLEX,
-        1.0,
+        1.5,
         (0, 255, 255),
-        3,
+        4,
     )
     cv2.putText(
         image,
         "Tip",
-        tuple(tip_end + np.array([15, 15])),
+        tuple(tip_end + np.array([25, 25])),
         cv2.FONT_HERSHEY_SIMPLEX,
-        1.0,
+        1.5,
         (255, 128, 0),
-        3,
+        4,
     )
 
     return image
@@ -213,15 +213,15 @@ def draw_ring_zone(
     )
 
     # Add zone label
-    label_pos = zone_data["center_point"].astype(np.int32) + np.array([band_width + 30, 0], dtype=np.int32)
+    label_pos = zone_data["center_point"].astype(np.int32) + np.array([band_width + 40, 0], dtype=np.int32)
     cv2.putText(
         image,
         "Ring Zone",
         tuple(label_pos),
         cv2.FONT_HERSHEY_SIMPLEX,
-        1.2,
+        1.8,
         (0, 255, 255),
-        3,
+        4,
     )
 
     return image
@@ -262,7 +262,7 @@ def add_measurement_text(
 
     # Create larger semi-transparent background for more text
     overlay = image.copy()
-    cv2.rectangle(overlay, (10, 10), (900, 450), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (10, 10), (1100, 550), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)
 
     # Confidence level indicator
@@ -292,17 +292,17 @@ def add_measurement_text(
     if scale_px_per_cm is not None:
         text_lines.insert(3, (f"Scale: {scale_px_per_cm:.2f} px/cm", (255, 255, 255), False))
 
-    y_offset = 50
-    line_height = 45
+    y_offset = 60
+    line_height = 55
     for i, (text, color, is_bold) in enumerate(text_lines):
         if text:  # Skip empty lines for drawing
-            thickness = 4 if is_bold else 3
+            thickness = 5 if is_bold else 4
             cv2.putText(
                 image,
                 text,
-                (30, y_offset + i * line_height),
+                (40, y_offset + i * line_height),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1.1,
+                1.5,
                 color,
                 thickness,
             )
