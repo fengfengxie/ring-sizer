@@ -64,9 +64,17 @@ def create_debug_visualization(
     if width_data is not None and zone_data is not None:
         vis = draw_cross_sections(vis, width_data)
 
-    # Add measurement annotation
+    # Add measurement annotation with JSON information
     if measurement_cm is not None and confidence is not None:
-        vis = add_measurement_text(vis, measurement_cm, confidence)
+        vis = add_measurement_text(
+            vis,
+            measurement_cm,
+            confidence,
+            scale_px_per_cm=scale_px_per_cm,
+            card_detected=card_result is not None,
+            finger_detected=contour is not None,
+            view_angle_ok=True,  # This is passed from caller
+        )
 
     return vis
 
@@ -80,7 +88,7 @@ def draw_card_overlay(
     corners = card_result["corners"].astype(np.int32)
 
     # Draw quadrilateral
-    cv2.polylines(image, [corners], isClosed=True, color=(0, 255, 0), thickness=3)
+    cv2.polylines(image, [corners], isClosed=True, color=(0, 255, 0), thickness=5)
 
     # Draw corner points with labels
     corner_labels = ["TL", "TR", "BR", "BL"]
@@ -119,7 +127,7 @@ def draw_finger_contour(
 ) -> np.ndarray:
     """Draw finger contour."""
     contour_int = contour.astype(np.int32).reshape((-1, 1, 2))
-    cv2.polylines(image, [contour_int], isClosed=True, color=(255, 0, 255), thickness=2)
+    cv2.polylines(image, [contour_int], isClosed=True, color=(0, 0, 255), thickness=5)
     return image
 
 
@@ -132,7 +140,7 @@ def draw_finger_axis(
     tip_end = axis_data["tip_end"].astype(np.int32)
 
     # Draw axis line
-    cv2.line(image, tuple(palm_end), tuple(tip_end), (255, 255, 0), 2)
+    cv2.line(image, tuple(palm_end), tuple(tip_end), (255, 255, 0), 4)
 
     # Mark endpoints
     cv2.circle(image, tuple(palm_end), 6, (0, 255, 255), -1)
@@ -194,14 +202,14 @@ def draw_ring_zone(
         tuple(start_left.astype(np.int32)),
         tuple(start_right.astype(np.int32)),
         (0, 255, 255),
-        2,
+        4,
     )
     cv2.line(
         image,
         tuple(end_left.astype(np.int32)),
         tuple(end_right.astype(np.int32)),
         (0, 255, 255),
-        2,
+        4,
     )
 
     # Add zone label
@@ -231,11 +239,11 @@ def draw_cross_sections(
         right_int = tuple(np.array(right, dtype=np.int32))
 
         # Draw cross-section line
-        cv2.line(image, left_int, right_int, (0, 128, 255), 1)
+        cv2.line(image, left_int, right_int, (0, 128, 255), 2)
 
         # Draw intersection points
-        cv2.circle(image, left_int, 3, (255, 0, 0), -1)
-        cv2.circle(image, right_int, 3, (255, 0, 0), -1)
+        cv2.circle(image, left_int, 5, (255, 0, 0), -1)
+        cv2.circle(image, right_int, 5, (255, 0, 0), -1)
 
     return image
 
@@ -244,55 +252,59 @@ def add_measurement_text(
     image: np.ndarray,
     measurement_cm: float,
     confidence: float,
+    scale_px_per_cm: Optional[float] = None,
+    card_detected: bool = True,
+    finger_detected: bool = True,
+    view_angle_ok: bool = True,
 ) -> np.ndarray:
-    """Add measurement result text overlay."""
+    """Add measurement result text overlay with JSON information."""
     h, w = image.shape[:2]
 
-    # Create semi-transparent background for text
+    # Create larger semi-transparent background for more text
     overlay = image.copy()
-    cv2.rectangle(overlay, (10, 10), (500, 150), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (10, 10), (650, 280), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)
-
-    # Add measurement text
-    text_lines = [
-        f"Finger Diameter: {measurement_cm:.2f} cm",
-        f"Confidence: {confidence:.3f}",
-    ]
 
     # Confidence level indicator
     if confidence > 0.85:
         level = "HIGH"
-        color = (0, 255, 0)
+        level_color = (0, 255, 0)
     elif confidence >= 0.6:
         level = "MEDIUM"
-        color = (0, 255, 255)
+        level_color = (0, 255, 255)
     else:
         level = "LOW"
-        color = (0, 0, 255)
+        level_color = (0, 0, 255)
 
-    text_lines.append(f"Level: {level}")
+    # Build text lines with JSON information
+    text_lines = [
+        ("=== MEASUREMENT RESULT ===", (255, 255, 255), False),
+        (f"Finger Diameter: {measurement_cm:.2f} cm", (255, 255, 255), False),
+        (f"Confidence: {confidence:.3f} ({level})", level_color, True),
+        ("", (255, 255, 255), False),  # Empty line
+        ("=== QUALITY FLAGS ===", (255, 255, 255), False),
+        (f"Card Detected: {'YES' if card_detected else 'NO'}", (0, 255, 0) if card_detected else (0, 0, 255), False),
+        (f"Finger Detected: {'YES' if finger_detected else 'NO'}", (0, 255, 0) if finger_detected else (0, 0, 255), False),
+        (f"View Angle OK: {'YES' if view_angle_ok else 'NO'}", (0, 255, 0) if view_angle_ok else (0, 0, 255), False),
+    ]
 
-    y_offset = 40
-    for i, text in enumerate(text_lines):
-        if i == 2:  # Confidence level
+    # Add scale information if available
+    if scale_px_per_cm is not None:
+        text_lines.insert(3, (f"Scale: {scale_px_per_cm:.2f} px/cm", (255, 255, 255), False))
+
+    y_offset = 35
+    line_height = 30
+    for i, (text, color, is_bold) in enumerate(text_lines):
+        if text:  # Skip empty lines for drawing
+            thickness = 3 if is_bold else 2
             cv2.putText(
                 image,
                 text,
-                (20, y_offset + i * 40),
+                (20, y_offset + i * line_height),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                0.7,
                 color,
-                2,
-            )
-        else:
-            cv2.putText(
-                image,
-                text,
-                (20, y_offset + i * 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (255, 255, 255),
-                2,
+                thickness,
             )
 
     return image
