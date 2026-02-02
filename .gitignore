@@ -19,12 +19,14 @@ outputs/*.json
 outputs/*.png
 outputs/*.jpg
 outputs/intermediate/
+outputs/card_detection_debug/
 
 # Downloaded models (auto-downloaded on first run)
 models/*.task
 
 # Test artifacts
 samples/test*.jpg
+samples/*.heic
 
 # OS
 .DS_Store
