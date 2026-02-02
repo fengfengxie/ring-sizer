@@ -601,3 +601,41 @@ outputs/
 - **Educational**: Shows complete processing pipeline visually
 
 ---
+
+## Bugfix: Adjust Blur Detection Threshold
+
+**Status:** Completed
+**Date:** 2026-02-02
+
+### Issue
+
+Blur detection threshold was too strict (50.0), rejecting iPhone photos that were actually sufficient quality for card detection. Test showed:
+- iPhone photo: blur score 28.6
+- Card detection: successful (confidence 0.93)
+- Quality check: failed incorrectly
+
+### Root Cause
+
+Laplacian variance method is sensitive to:
+- Smooth surfaces (grey background)
+- iPhone camera processing (texture smoothing)
+- Slightly soft backgrounds (normal for depth of field)
+
+Card detection via edge detection works well even with moderate blur scores.
+
+### Solution
+
+Lowered blur threshold from 50.0 to 20.0 to better match real-world iPhone photo quality while still rejecting truly blurry images.
+
+### Testing
+
+| Image | Blur Score | Old Result | New Result | Card Detection |
+|-------|------------|------------|------------|----------------|
+| test_sample3.jpg | 28.6 | FAIL | PASS ✓ | Success (0.93) |
+| test_sample4.jpg | 23.3 | FAIL | PASS ✓ | TBD |
+
+### Files Modified
+
+- `utils/image_quality.py` - Changed BLUR_THRESHOLD from 50.0 to 20.0
+
+---

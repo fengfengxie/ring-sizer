@@ -13,7 +13,7 @@ from typing import Dict, Any, Tuple
 
 
 # Quality thresholds
-BLUR_THRESHOLD = 50.0  # Laplacian variance below this is considered blurry
+BLUR_THRESHOLD = 20.0  # Laplacian variance below this is considered blurry
 MIN_BRIGHTNESS = 40  # Mean brightness below this is underexposed
 MAX_BRIGHTNESS = 220  # Mean brightness above this is overexposed
 MIN_CONTRAST = 30  # Std dev below this indicates low contrast
