@@ -191,13 +191,24 @@ def score_card_candidate(
 
 
 def save_debug_image(image: np.ndarray, filename: str, debug_dir: Optional[str]) -> None:
-    """Save a debug image with consistent formatting."""
+    """Save a debug image with consistent formatting and compression."""
     if debug_dir is None:
         return
 
     Path(debug_dir).mkdir(parents=True, exist_ok=True)
     output_path = Path(debug_dir) / filename
-    cv2.imwrite(str(output_path), image)
+
+    # Downsample large images to reduce file size
+    h, w = image.shape[:2]
+    max_dimension = 1920  # Max width or height
+    if max(h, w) > max_dimension:
+        scale = max_dimension / max(h, w)
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # Use PNG compression for smaller file sizes
+    cv2.imwrite(str(output_path), image, [cv2.IMWRITE_PNG_COMPRESSION, 6])
 
 
 def draw_contours_overlay(
