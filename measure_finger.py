@@ -207,7 +207,13 @@ def measure_finger(
         return create_output(fail_reason=quality["fail_reason"])
 
     # Phase 3: Credit card detection & scale calibration
-    card_result = detect_credit_card(image)
+    # Create card detection debug subdirectory if debug enabled
+    card_debug_dir = None
+    if debug_path is not None:
+        from pathlib import Path
+        card_debug_dir = str(Path(debug_path).parent / "card_detection_debug")
+
+    card_result = detect_credit_card(image, debug_dir=card_debug_dir)
 
     if card_result is None:
         print("Credit card not detected in image")

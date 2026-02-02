@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Standard Task Workflow
+
+For tasks of implementing **new features**:
+1. Read PRD.md, Plan.md, Progress.md before coding
+2. Summarize current project state before implementation
+3. Carry out the implementatation; after that, build and test if possible
+4. Update Progress.md after changes
+5. Commit with a clear, concise message
+
+For tasks of **bug fixing**:
+1. Summarize the bug, reason and solution before implementation
+2. Carry out the implementation to fix the bug; build and test afterwards;
+3. Update Progress.md after changes
+4. Commit with a clear, concise message
+
+For tasks of **reboot** from a new codex session:
+1. Read PRD.md, Plan.md, Progress.md.
+2. Assume this is a continuation of an existing project.
+3. Summarize your understanding of the current state and propose the next concrete step without writing code yet.
+
 ## Project Overview
 
 Ring Sizer is a **local, terminal-executable computer vision program** that measures the outer width (diameter) of a finger at the ring-wearing zone using a single RGB image. It uses a standard credit card (ISO/IEC 7810 ID-1: 85.60mm × 53.98mm) as a physical size reference for scale calibration.

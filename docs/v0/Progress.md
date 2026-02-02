@@ -499,3 +499,105 @@ All phases (1-9) of the implementation plan are now complete! The system can:
 - Generate debug visualizations
 
 ---
+
+## Enhancement: Card Detection Debug Visualization
+
+**Status:** Completed
+**Date:** 2026-02-02
+
+### Completed Tasks
+
+1. **Debug Image Saving Infrastructure** (`utils/card_detection.py`)
+   - Added `save_debug_image()` helper function
+   - Creates debug directory automatically
+   - Saves all intermediate processing steps
+
+2. **Contour Overlay Visualization**
+   - Implemented `draw_contours_overlay()` for strategy-specific overlays
+   - Color-coded by detection strategy (Canny, Adaptive, Otsu, Color-based)
+   - Shows candidate count for each strategy
+
+3. **Scored Candidates Visualization**
+   - Implemented `draw_candidates_with_scores()` for detailed analysis
+   - Shows top 5 candidates with scores and rejection reasons
+   - Color-coded ranking (green=best, yellow, orange, magenta, pink)
+   - Annotates each with score, aspect ratio, area ratio
+   - Displays rejection reasons for failed candidates
+
+4. **21-Image Debug Sequence**
+   Created comprehensive visualization pipeline:
+   - **Basic preprocessing:**
+     - 01_original.png - Original input image
+     - 02_grayscale.png - Grayscale conversion
+     - 03_bilateral_filtered.png - Noise-reduced image
+
+   - **Strategy 1: Canny edge detection**
+     - 04_canny_20_60.png - Low threshold edges
+     - 04_canny_50_150.png - Medium threshold edges
+     - 04_canny_100_250.png - High threshold edges
+     - 07_canny_morphology.png - After morphological closing
+     - 08_canny_contours.png - All Canny candidates overlaid
+
+   - **Strategy 2: Adaptive thresholding**
+     - 09_adaptive_11_2.png - Small block size
+     - 10_adaptive_31_10.png - Large block size
+     - 11_adaptive_contours.png - All adaptive candidates overlaid
+
+   - **Strategy 3: Otsu's thresholding**
+     - 12_otsu_binary.png - Binary threshold
+     - 13_otsu_inverted.png - Inverted threshold
+     - 14_otsu_contours.png - All Otsu candidates overlaid
+
+   - **Strategy 4: Color-based segmentation**
+     - 15_hsv_saturation.png - HSV saturation channel
+     - 16_low_sat_mask.png - Low saturation mask
+     - 17_gray_mask.png - Final gray card mask
+     - 18_color_contours.png - All color candidates overlaid
+
+   - **Candidate analysis:**
+     - 19_all_candidates.png - All quadrilateral candidates
+     - 20_scored_candidates.png - Top 5 with scores and reasons
+     - 21_final_detection.png - Selected card with full details
+
+5. **Pipeline Integration** (`measure_finger.py`)
+   - Modified to create `card_detection_debug/` subdirectory
+   - Passes debug directory path to `detect_credit_card()`
+   - Only generates debug images when `--debug` flag is used
+   - Maintains backward compatibility
+
+6. **Console Feedback**
+   - Prints debug directory path when saving
+   - Reports when all 21 images are saved
+   - Shows candidate count and selection results
+
+### Technical Details
+
+- **Subdirectory Structure**: Debug images saved in `card_detection_debug/` alongside main debug overlay
+- **Representative Sampling**: Saves 3-4 examples per strategy (not all variations) to limit disk usage
+- **Color Coding**: Each detection strategy has distinct color for easy identification
+- **Text Annotations**: White text with black outline for visibility on any background
+- **Backward Compatible**: No debug images generated when `--debug` flag is not used
+
+### Output Structure
+
+When running with `--debug outputs/debug.png`:
+```
+outputs/
+  result.json
+  debug_overlay.png              # Main debug visualization
+  card_detection_debug/          # Card detection debug images
+    01_original.png
+    02_grayscale.png
+    ...
+    21_final_detection.png
+```
+
+### Benefits
+
+- **Visual Inspection**: Can verify stability of each detection strategy
+- **Failure Analysis**: Easy to identify which strategies work/fail for specific images
+- **Algorithm Tuning**: Can tune thresholds by examining intermediate results
+- **Quality Assurance**: Validates that detection pipeline is working as expected
+- **Educational**: Shows complete processing pipeline visually
+
+---
