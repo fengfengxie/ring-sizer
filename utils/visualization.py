@@ -13,6 +13,71 @@ import cv2
 import numpy as np
 from typing import Dict, Any, Optional, List, Tuple
 
+# Font and visualization constants
+FONT_FACE = cv2.FONT_HERSHEY_SIMPLEX
+FONT_BASE_SCALE = 1.5  # Base font scale at reference height
+FONT_REFERENCE_HEIGHT = 1200  # Reference image height for font scaling
+FONT_MIN_SCALE = 1.5  # Minimum font scale regardless of image size
+
+# Thickness constants
+BASE_LINE_THICKNESS = 4
+BASE_TEXT_THICKNESS = 2
+BASE_CONTOUR_THICKNESS = 5
+
+# Color constants (BGR format)
+COLOR_CARD = (0, 255, 0)  # Green
+COLOR_FINGER = (0, 0, 255)  # Red (actually Magenta in practice)
+COLOR_AXIS_PALM = (0, 255, 255)  # Cyan
+COLOR_AXIS_TIP = (255, 128, 0)  # Orange
+COLOR_AXIS_LINE = (255, 255, 0)  # Yellow
+COLOR_RING_ZONE = (0, 255, 255)  # Cyan
+COLOR_CROSS_SECTION = (0, 128, 255)  # Orange
+COLOR_POINT = (255, 0, 0)  # Blue
+COLOR_TEXT_WHITE = (255, 255, 255)  # White
+COLOR_TEXT_GREEN = (0, 255, 0)  # Green
+COLOR_TEXT_RED = (0, 0, 255)  # Red
+
+# Size constants
+CORNER_CIRCLE_RADIUS = 15
+ENDPOINT_CIRCLE_RADIUS = 15
+INTERSECTION_CIRCLE_RADIUS = 8
+TEXT_OFFSET = 25
+LABEL_OFFSET = 20
+
+# Layout constants
+RESULT_TEXT_Y_START = 60
+RESULT_TEXT_LINE_HEIGHT = 55
+RESULT_TEXT_X_OFFSET = 40
+
+
+def get_scaled_font_params(image_height: int) -> Dict[str, float]:
+    """
+    Calculate font parameters scaled to image dimensions.
+
+    Args:
+        image_height: Height of the image in pixels
+
+    Returns:
+        Dictionary containing scaled font parameters
+    """
+    font_scale = max(FONT_MIN_SCALE, image_height / FONT_REFERENCE_HEIGHT)
+    scale_factor = font_scale / FONT_BASE_SCALE
+
+    return {
+        "font_scale": font_scale,
+        "text_thickness": int(BASE_TEXT_THICKNESS * scale_factor),
+        "line_thickness": int(BASE_LINE_THICKNESS * scale_factor),
+        "contour_thickness": int(BASE_CONTOUR_THICKNESS * scale_factor),
+        "corner_radius": int(CORNER_CIRCLE_RADIUS * scale_factor),
+        "endpoint_radius": int(ENDPOINT_CIRCLE_RADIUS * scale_factor),
+        "intersection_radius": int(INTERSECTION_CIRCLE_RADIUS * scale_factor),
+        "text_offset": int(TEXT_OFFSET * scale_factor),
+        "label_offset": int(LABEL_OFFSET * scale_factor),
+        "line_height": int(RESULT_TEXT_LINE_HEIGHT * scale_factor),
+        "y_start": int(RESULT_TEXT_Y_START * scale_factor),
+        "x_offset": int(RESULT_TEXT_X_OFFSET * scale_factor),
+    }
+
 
 def create_debug_visualization(
     image: np.ndarray,
@@ -86,27 +151,24 @@ def draw_card_overlay(
 ) -> np.ndarray:
     """Draw credit card detection overlay."""
     corners = card_result["corners"].astype(np.int32)
-
-    # Calculate font scale based on image height
-    h = image.shape[0]
-    font_scale = max(1.5, h / 1200)
-    thickness = int(2 * font_scale / 1.5)
+    params = get_scaled_font_params(image.shape[0])
 
     # Draw quadrilateral
-    cv2.polylines(image, [corners], isClosed=True, color=(0, 255, 0), thickness=int(5 * font_scale / 1.5))
+    cv2.polylines(image, [corners], isClosed=True, color=COLOR_CARD,
+                  thickness=params["contour_thickness"])
 
     # Draw corner points with labels
     corner_labels = ["TL", "TR", "BR", "BL"]
-    for i, (corner, label) in enumerate(zip(corners, corner_labels)):
-        cv2.circle(image, tuple(corner), int(15 * font_scale / 1.5), (0, 255, 0), -1)
+    for corner, label in zip(corners, corner_labels):
+        cv2.circle(image, tuple(corner), params["corner_radius"], COLOR_CARD, -1)
         cv2.putText(
             image,
             label,
-            tuple(corner + np.array([int(20 * font_scale / 1.5), int(-20 * font_scale / 1.5)])),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            (0, 255, 0),
-            thickness,
+            tuple(corner + np.array([params["label_offset"], -params["label_offset"]])),
+            FONT_FACE,
+            params["font_scale"],
+            COLOR_CARD,
+            params["text_thickness"],
         )
 
     # Add scale annotation
@@ -117,10 +179,10 @@ def draw_card_overlay(
             image,
             text,
             tuple(center),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale * 1.2,
-            (0, 255, 0),
-            thickness,
+            FONT_FACE,
+            params["font_scale"] * 1.2,
+            COLOR_CARD,
+            params["text_thickness"],
         )
 
     return image
@@ -131,8 +193,10 @@ def draw_finger_contour(
     contour: np.ndarray,
 ) -> np.ndarray:
     """Draw finger contour."""
+    params = get_scaled_font_params(image.shape[0])
     contour_int = contour.astype(np.int32).reshape((-1, 1, 2))
-    cv2.polylines(image, [contour_int], isClosed=True, color=(0, 0, 255), thickness=5)
+    cv2.polylines(image, [contour_int], isClosed=True, color=COLOR_FINGER,
+                  thickness=params["contour_thickness"])
     return image
 
 
@@ -143,38 +207,34 @@ def draw_finger_axis(
     """Draw finger axis line."""
     palm_end = axis_data["palm_end"].astype(np.int32)
     tip_end = axis_data["tip_end"].astype(np.int32)
-
-    # Calculate font scale
-    h = image.shape[0]
-    font_scale = max(2.5, h / 800)
-    thickness = int(3 * font_scale / 1.5)
+    params = get_scaled_font_params(image.shape[0])
 
     # Draw axis line
-    cv2.line(image, tuple(palm_end), tuple(tip_end), (255, 255, 0), int(4 * font_scale / 1.5))
+    cv2.line(image, tuple(palm_end), tuple(tip_end), COLOR_AXIS_LINE,
+             params["line_thickness"])
 
     # Mark endpoints
-    cv2.circle(image, tuple(palm_end), int(15 * font_scale / 1.5), (0, 255, 255), -1)
-    cv2.circle(image, tuple(tip_end), int(15 * font_scale / 1.5), (255, 128, 0), -1)
+    cv2.circle(image, tuple(palm_end), params["endpoint_radius"], COLOR_AXIS_PALM, -1)
+    cv2.circle(image, tuple(tip_end), params["endpoint_radius"], COLOR_AXIS_TIP, -1)
 
     # Add labels
-    offset = int(25 * font_scale / 1.5)
     cv2.putText(
         image,
         "Palm",
-        tuple(palm_end + np.array([offset, offset])),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale,
-        (0, 255, 255),
-        thickness,
+        tuple(palm_end + np.array([params["text_offset"], params["text_offset"]])),
+        FONT_FACE,
+        params["font_scale"],
+        COLOR_AXIS_PALM,
+        params["text_thickness"],
     )
     cv2.putText(
         image,
         "Tip",
-        tuple(tip_end + np.array([offset, offset])),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale,
-        (255, 128, 0),
-        thickness,
+        tuple(tip_end + np.array([params["text_offset"], params["text_offset"]])),
+        FONT_FACE,
+        params["font_scale"],
+        COLOR_AXIS_TIP,
+        params["text_thickness"],
     )
 
     return image
@@ -204,40 +264,37 @@ def draw_ring_zone(
     # Draw zone band as a semi-transparent overlay
     overlay = image.copy()
     zone_poly = np.array([start_left, start_right, end_right, end_left], dtype=np.int32)
-    cv2.fillPoly(overlay, [zone_poly], (0, 255, 255))
+    cv2.fillPoly(overlay, [zone_poly], COLOR_RING_ZONE)
     cv2.addWeighted(overlay, 0.2, image, 0.8, 0, image)
 
     # Draw zone boundaries
+    params = get_scaled_font_params(image.shape[0])
     cv2.line(
         image,
         tuple(start_left.astype(np.int32)),
         tuple(start_right.astype(np.int32)),
-        (0, 255, 255),
-        4,
+        COLOR_RING_ZONE,
+        params["line_thickness"],
     )
     cv2.line(
         image,
         tuple(end_left.astype(np.int32)),
         tuple(end_right.astype(np.int32)),
-        (0, 255, 255),
-        4,
+        COLOR_RING_ZONE,
+        params["line_thickness"],
     )
 
     # Add zone label
-    h = image.shape[0]
-    font_scale = max(2.5, h / 800)
-    thickness = int(3 * font_scale / 1.5)
-    offset = int(40 * font_scale / 1.5)
-
-    label_pos = zone_data["center_point"].astype(np.int32) + np.array([band_width + offset, 0], dtype=np.int32)
+    label_offset = int(40 * params["font_scale"] / FONT_BASE_SCALE)
+    label_pos = zone_data["center_point"].astype(np.int32) + np.array([band_width + label_offset, 0], dtype=np.int32)
     cv2.putText(
         image,
         "Ring Zone",
         tuple(label_pos),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale * 1.2,
-        (0, 255, 255),
-        thickness,
+        FONT_FACE,
+        params["font_scale"] * 1.2,
+        COLOR_RING_ZONE,
+        params["text_thickness"],
     )
 
     return image
@@ -248,18 +305,20 @@ def draw_cross_sections(
     width_data: Dict[str, Any],
 ) -> np.ndarray:
     """Draw cross-section sample lines and intersection points."""
+    params = get_scaled_font_params(image.shape[0])
     sample_points = width_data.get("sample_points", [])
 
-    for i, (left, right) in enumerate(sample_points):
+    for left, right in sample_points:
         left_int = tuple(np.array(left, dtype=np.int32))
         right_int = tuple(np.array(right, dtype=np.int32))
 
         # Draw cross-section line
-        cv2.line(image, left_int, right_int, (0, 128, 255), 2)
+        cv2.line(image, left_int, right_int, COLOR_CROSS_SECTION,
+                 max(2, params["line_thickness"] // 2))
 
         # Draw intersection points
-        cv2.circle(image, left_int, 5, (255, 0, 0), -1)
-        cv2.circle(image, right_int, 5, (255, 0, 0), -1)
+        cv2.circle(image, left_int, params["intersection_radius"], COLOR_POINT, -1)
+        cv2.circle(image, right_int, params["intersection_radius"], COLOR_POINT, -1)
 
     return image
 
@@ -284,46 +343,42 @@ def add_measurement_text(
     # Confidence level indicator
     if confidence > 0.85:
         level = "HIGH"
-        level_color = (0, 255, 0)
+        level_color = COLOR_TEXT_GREEN
     elif confidence >= 0.6:
         level = "MEDIUM"
-        level_color = (0, 255, 255)
+        level_color = (0, 255, 255)  # Yellow
     else:
         level = "LOW"
-        level_color = (0, 0, 255)
+        level_color = COLOR_TEXT_RED
 
     # Build text lines with JSON information
     text_lines = [
-        ("=== MEASUREMENT RESULT ===", (255, 255, 255), False),
-        (f"Finger Diameter: {measurement_cm:.2f} cm", (255, 255, 255), False),
+        ("=== MEASUREMENT RESULT ===", COLOR_TEXT_WHITE, False),
+        (f"Finger Diameter: {measurement_cm:.2f} cm", COLOR_TEXT_WHITE, False),
         (f"Confidence: {confidence:.3f} ({level})", level_color, True),
-        ("", (255, 255, 255), False),  # Empty line
-        ("=== QUALITY FLAGS ===", (255, 255, 255), False),
-        (f"Card Detected: {'YES' if card_detected else 'NO'}", (0, 255, 0) if card_detected else (0, 0, 255), False),
-        (f"Finger Detected: {'YES' if finger_detected else 'NO'}", (0, 255, 0) if finger_detected else (0, 0, 255), False),
-        (f"View Angle OK: {'YES' if view_angle_ok else 'NO'}", (0, 255, 0) if view_angle_ok else (0, 0, 255), False),
+        ("", COLOR_TEXT_WHITE, False),  # Empty line
+        ("=== QUALITY FLAGS ===", COLOR_TEXT_WHITE, False),
+        (f"Card Detected: {'YES' if card_detected else 'NO'}", COLOR_TEXT_GREEN if card_detected else COLOR_TEXT_RED, False),
+        (f"Finger Detected: {'YES' if finger_detected else 'NO'}", COLOR_TEXT_GREEN if finger_detected else COLOR_TEXT_RED, False),
+        (f"View Angle OK: {'YES' if view_angle_ok else 'NO'}", COLOR_TEXT_GREEN if view_angle_ok else COLOR_TEXT_RED, False),
     ]
 
     # Add scale information if available
     if scale_px_per_cm is not None:
-        text_lines.insert(3, (f"Scale: {scale_px_per_cm:.2f} px/cm", (255, 255, 255), False))
+        text_lines.insert(3, (f"Scale: {scale_px_per_cm:.2f} px/cm", COLOR_TEXT_WHITE, False))
 
-    # Calculate font scale based on image dimensions for readability
-    h = image.shape[0]
-    base_font_scale = max(1.5, h / 1200)  # Scales with image height, reasonable at ~1920px
-
-    y_offset = int(60 * base_font_scale / 1.5)
-    line_height = int(55 * base_font_scale / 1.5)
+    # Get scaled font parameters
+    params = get_scaled_font_params(image.shape[0])
 
     for i, (text, color, is_bold) in enumerate(text_lines):
         if text:  # Skip empty lines for drawing
-            thickness = int(5 * base_font_scale / 1.5) if is_bold else int(4 * base_font_scale / 1.5)
+            thickness = params["text_thickness"] + 1 if is_bold else params["text_thickness"]
             cv2.putText(
                 image,
                 text,
-                (int(40 * base_font_scale / 1.5), y_offset + i * line_height),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                base_font_scale,
+                (params["x_offset"], params["y_start"] + i * params["line_height"]),
+                FONT_FACE,
+                params["font_scale"],
                 color,
                 thickness,
             )
