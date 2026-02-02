@@ -335,6 +335,31 @@ def draw_candidates_with_scores(
     return overlay
 
 
+def refine_corners(gray: np.ndarray, corners: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Refine corner positions to sub-pixel accuracy using cornerSubPix.
+
+    Note: Credit cards have rounded corners (~3mm radius), so perfect corner
+    detection is inherently limited. This provides best-effort refinement.
+
+    Args:
+        gray: Grayscale image
+        corners: Initial corner positions (4x1x2 or 4x2 array)
+
+    Returns:
+        Refined corners or None if refinement fails
+    """
+    try:
+        corners_float = corners.reshape(-1, 1, 2).astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+        # Use larger search window (11x11) to handle rounded corners better
+        refined = cv2.cornerSubPix(gray, corners_float, (11, 11), (-1, -1), criteria)
+        return refined
+    except:
+        return None
+
+
 def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> List[np.ndarray]:
     """
     Find potential card contours using multiple detection strategies.
@@ -381,7 +406,9 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
                 approx = cv2.approxPolyDP(contour, eps * peri, True)
 
                 if len(approx) == 4:
-                    quads.append(approx)
+                    # Refine corners to sub-pixel accuracy
+                    refined = refine_corners(gray, approx)
+                    quads.append(refined if refined is not None else approx)
                     break
                 elif len(approx) > 4 and len(approx) <= 8:
                     # Try to find 4 dominant corners using convex hull
@@ -390,7 +417,9 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
                         # Get the 4 corners with maximum area
                         hull_approx = cv2.approxPolyDP(hull, 0.05 * cv2.arcLength(hull, True), True)
                         if len(hull_approx) == 4:
-                            quads.append(hull_approx)
+                            # Refine corners to sub-pixel accuracy
+                            refined = refine_corners(gray, hull_approx)
+                            quads.append(refined if refined is not None else hull_approx)
                             break
 
         return quads
