@@ -18,6 +18,9 @@ import urllib.request
 import os
 from pathlib import Path
 
+# Import debug observer
+from src.debug_observer import DebugObserver
+
 # Import visualization constants
 from src.viz_constants import (
     FONT_FACE, FontScale, FontThickness, Color, Size, Layout
@@ -49,265 +52,6 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/han
 
 # Initialize MediaPipe Hands (lazy loading)
 _hands_detector = None
-
-# Hand skeleton connections (MediaPipe hand model)
-HAND_CONNECTIONS = [
-    # Palm
-    (0, 1), (0, 5), (0, 17), (5, 9), (9, 13), (13, 17),
-    # Thumb
-    (1, 2), (2, 3), (3, 4),
-    # Index
-    (5, 6), (6, 7), (7, 8),
-    # Middle
-    (9, 10), (10, 11), (11, 12),
-    # Ring
-    (13, 14), (14, 15), (15, 16),
-    # Pinky
-    (17, 18), (18, 19), (19, 20),
-]
-
-# Finger colors for visualization
-FINGER_COLORS = {
-    "thumb": Color.RED,
-    "index": Color.CYAN,
-    "middle": Color.YELLOW,
-    "ring": Color.MAGENTA,
-    "pinky": Color.ORANGE,
-}
-
-
-def save_debug_image(image: np.ndarray, filename: str, debug_dir: Optional[str]) -> None:
-    """
-    Save debug image with compression and downsampling.
-
-    Args:
-        image: Image to save
-        filename: Output filename
-        debug_dir: Directory to save to (if None, skip saving)
-    """
-    if debug_dir is None:
-        return
-
-    Path(debug_dir).mkdir(parents=True, exist_ok=True)
-    output_path = Path(debug_dir) / filename
-
-    # Downsample if too large (max 1920px dimension)
-    h, w = image.shape[:2]
-    max_dim = 1920
-    if max(h, w) > max_dim:
-        scale = max_dim / max(h, w)
-        new_w = int(w * scale)
-        new_h = int(h * scale)
-        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    # PNG compression
-    cv2.imwrite(str(output_path), image, [cv2.IMWRITE_PNG_COMPRESSION, 6])
-
-
-def draw_landmarks_overlay(image: np.ndarray, landmarks: np.ndarray, label: bool = True) -> np.ndarray:
-    """
-    Draw hand landmarks as numbered circles.
-
-    Args:
-        image: Input image
-        landmarks: 21x2 array of landmark positions
-        label: Whether to draw landmark numbers
-
-    Returns:
-        Image with landmarks drawn
-    """
-    overlay = image.copy()
-
-    for i, (x, y) in enumerate(landmarks):
-        # Draw circle
-        cv2.circle(overlay, (int(x), int(y)), Size.ENDPOINT_RADIUS, Color.GREEN, -1)
-        cv2.circle(overlay, (int(x), int(y)), Size.ENDPOINT_RADIUS, Color.BLACK, 2)
-
-        # Draw number
-        if label:
-            text = str(i)
-            text_size = cv2.getTextSize(text, FONT_FACE, FontScale.SMALL, FontThickness.BODY)[0]
-            text_x = int(x - text_size[0] / 2)
-            text_y = int(y + text_size[1] / 2)
-
-            # Black outline
-            cv2.putText(overlay, text, (text_x, text_y), FONT_FACE, FontScale.SMALL,
-                       Color.BLACK, FontThickness.BODY + 2, cv2.LINE_AA)
-            # White text
-            cv2.putText(overlay, text, (text_x, text_y), FONT_FACE, FontScale.SMALL,
-                       Color.WHITE, FontThickness.BODY, cv2.LINE_AA)
-
-    return overlay
-
-
-def draw_hand_skeleton(image: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
-    """
-    Draw hand skeleton with connections between landmarks.
-
-    Args:
-        image: Input image
-        landmarks: 21x2 array of landmark positions
-
-    Returns:
-        Image with skeleton drawn
-    """
-    overlay = image.copy()
-
-    # Draw connections
-    for idx1, idx2 in HAND_CONNECTIONS:
-        pt1 = (int(landmarks[idx1, 0]), int(landmarks[idx1, 1]))
-        pt2 = (int(landmarks[idx2, 0]), int(landmarks[idx2, 1]))
-        cv2.line(overlay, pt1, pt2, Color.CYAN, Size.LINE_THICK, cv2.LINE_AA)
-
-    # Draw landmarks on top
-    for i, (x, y) in enumerate(landmarks):
-        cv2.circle(overlay, (int(x), int(y)), Size.CORNER_RADIUS, Color.GREEN, -1)
-        cv2.circle(overlay, (int(x), int(y)), Size.CORNER_RADIUS, Color.BLACK, 2)
-
-    return overlay
-
-
-def draw_detection_info(image: np.ndarray, confidence: float, handedness: str, rotation: int) -> np.ndarray:
-    """
-    Draw detection metadata on image.
-
-    Args:
-        image: Input image
-        confidence: Detection confidence (0-1)
-        handedness: "Left" or "Right"
-        rotation: Rotation code (0, 1, 2, 3)
-
-    Returns:
-        Image with text overlay
-    """
-    overlay = image.copy()
-
-    rotation_names = {0: "None", 1: "90° CW", 2: "180°", 3: "90° CCW"}
-    rotation_name = rotation_names.get(rotation, "Unknown")
-
-    lines = [
-        f"Confidence: {confidence:.3f}",
-        f"Hand: {handedness}",
-        f"Rotation: {rotation_name}",
-    ]
-
-    y = Layout.TITLE_Y
-    for line in lines:
-        # Black outline
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-        # White text
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.WHITE, FontThickness.LABEL, cv2.LINE_AA)
-        y += Layout.LINE_SPACING
-
-    return overlay
-
-
-def draw_finger_regions(image: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
-    """
-    Draw individual finger regions in different colors.
-
-    Args:
-        image: Input image
-        landmarks: 21x2 array of landmark positions
-
-    Returns:
-        Image with colored finger regions
-    """
-    h, w = image.shape[:2]
-    overlay = image.copy()
-    mask_overlay = np.zeros((h, w, 3), dtype=np.uint8)
-
-    # Draw thumb
-    thumb_pts = landmarks[THUMB_LANDMARKS].astype(np.int32)
-    cv2.fillConvexPoly(mask_overlay, thumb_pts, FINGER_COLORS["thumb"])
-
-    # Draw each finger
-    for finger_name, indices in FINGER_LANDMARKS.items():
-        finger_pts = landmarks[indices].astype(np.int32)
-        cv2.fillConvexPoly(mask_overlay, finger_pts, FINGER_COLORS[finger_name])
-
-    # Blend with original
-    overlay = cv2.addWeighted(overlay, 0.6, mask_overlay, 0.4, 0)
-
-    return overlay
-
-
-def draw_extension_scores(image: np.ndarray, scores: Dict[str, float], selected: str) -> np.ndarray:
-    """
-    Draw finger extension scores.
-
-    Args:
-        image: Input image
-        scores: Dict mapping finger name to extension score
-        selected: Name of selected finger
-
-    Returns:
-        Image with scores drawn
-    """
-    overlay = image.copy()
-
-    # Sort by score
-    sorted_fingers = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-    y = Layout.TITLE_Y
-    for finger_name, score in sorted_fingers:
-        is_selected = (finger_name == selected)
-        color = Color.GREEN if is_selected else Color.WHITE
-        text = f"{finger_name.capitalize()}: {score:.1f}" + (" ✓" if is_selected else "")
-
-        # Black outline
-        cv2.putText(overlay, text, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-        # Colored text
-        cv2.putText(overlay, text, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   color, FontThickness.LABEL, cv2.LINE_AA)
-        y += Layout.LINE_SPACING
-
-    return overlay
-
-
-def draw_component_stats(image: np.ndarray, labels: np.ndarray, stats: np.ndarray,
-                         selected_idx: int) -> np.ndarray:
-    """
-    Draw connected component statistics.
-
-    Args:
-        image: Input image
-        labels: Connected component labels
-        stats: Component statistics from cv2.connectedComponentsWithStats
-        selected_idx: Index of selected component
-
-    Returns:
-        Image with colored components and stats
-    """
-    overlay = image.copy()
-
-    # Create colored component visualization
-    num_labels = stats.shape[0]
-    colors = np.random.randint(0, 255, size=(num_labels, 3), dtype=np.uint8)
-    colors[0] = [0, 0, 0]  # Background is black
-    colors[selected_idx] = Color.GREEN  # Selected is green
-
-    colored = colors[labels]
-    overlay = cv2.addWeighted(overlay, 0.5, colored, 0.5, 0)
-
-    # Draw text stats
-    y = Layout.TITLE_Y
-    lines = [
-        f"Components: {num_labels - 1}",  # Exclude background
-        f"Selected area: {stats[selected_idx, cv2.CC_STAT_AREA]} px",
-    ]
-
-    for line in lines:
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.WHITE, FontThickness.LABEL, cv2.LINE_AA)
-        y += Layout.LINE_SPACING
-
-    return overlay
 
 
 def _download_model():
@@ -431,10 +175,14 @@ def segment_hand(
         - handedness: "Left" or "Right"
         Or None if no hand detected
     """
+    # Create debug observer if debug mode enabled
+    observer = DebugObserver(debug_dir) if debug_dir else None
+    
     h, w = image.shape[:2]
 
     # Debug: Save original image
-    save_debug_image(image, "01_original.png", debug_dir)
+    if observer:
+        observer.save_stage("01_original", image)
 
     # Resize if image is too large (MediaPipe works better with smaller images)
     scale = 1.0
@@ -448,8 +196,8 @@ def segment_hand(
         new_h, new_w = h, w
 
     # Debug: Save resized image (if resized)
-    if scale != 1.0:
-        save_debug_image(resized, "02_resized_for_detection.png", debug_dir)
+    if scale != 1.0 and observer:
+        observer.save_stage("02_resized_for_detection", resized)
 
     # Process with MediaPipe (try multiple rotations)
     detector = _get_hands_detector()
@@ -487,21 +235,17 @@ def segment_hand(
     landmarks_normalized[:, 1] /= h
 
     # Debug: Draw landmarks overlay
-    if debug_dir:
-        landmarks_img = draw_landmarks_overlay(image, landmarks, label=True)
-        save_debug_image(landmarks_img, "03_landmarks_overlay.png", debug_dir)
-
-        # Draw hand skeleton
-        skeleton_img = draw_hand_skeleton(image, landmarks)
-        save_debug_image(skeleton_img, "04_hand_skeleton.png", debug_dir)
-
-        # Draw detection info
-        info_img = draw_detection_info(image, handedness[0].score,
-                                       handedness[0].category_name, rotation_code)
-        save_debug_image(info_img, "05_detection_info.png", debug_dir)
+    if observer:
+        observer.draw_and_save("03_landmarks_overlay", image,
+                             draw_landmarks_overlay, landmarks, label=True)
+        observer.draw_and_save("04_hand_skeleton", image,
+                             draw_hand_skeleton, landmarks)
+        observer.draw_and_save("05_detection_info", image,
+                             draw_detection_info, handedness[0].score,
+                             handedness[0].category_name, rotation_code)
 
     # Generate hand mask at original resolution
-    mask = _create_hand_mask(landmarks, (h, w), debug_dir=debug_dir)
+    mask = _create_hand_mask(landmarks, (h, w), observer=observer)
 
     return {
         "landmarks": landmarks,
