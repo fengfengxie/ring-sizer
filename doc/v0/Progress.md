@@ -163,3 +163,33 @@ Added 21-image debug pipeline visualizing all intermediate card detection steps:
 **Location**: `doc/v0/Algorithm.md`
 
 ---
+
+## Refactoring: Modular Algorithm Documentation Structure ✅
+**Date:** 2026-02-03
+
+**Changes**: Reorganized documentation from monolithic to modular structure.
+
+**New Structure:**
+```
+doc/v0/algorithms/
+├── README.md                  # Index, pipeline overview, quick reference
+├── 02-card-detection.md       # Complete card detection documentation
+└── [01, 03-09].md            # Placeholders for future algorithms
+```
+
+**Benefits:**
+- ✅ **Focused files** - Each algorithm in separate document
+- ✅ **Better navigation** - README with pipeline flowchart
+- ✅ **Scalability** - Easy to add new algorithms
+- ✅ **Better git diffs** - Changes isolated to specific files
+- ✅ **Parallel editing** - Multiple algorithms can be documented simultaneously
+
+**Migration:**
+- Moved card detection content from `Algorithm.md` to `algorithms/02-card-detection.md`
+- Created comprehensive index in `algorithms/README.md`
+- Added quick reference table and reading guide
+- Removed old monolithic `Algorithm.md`
+
+**Result**: Cleaner, more maintainable documentation architecture following best practices.
+
+---

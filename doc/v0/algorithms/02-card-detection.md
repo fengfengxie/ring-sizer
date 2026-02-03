@@ -1,23 +1,10 @@
-# Algorithm Documentation
-
-This document provides detailed technical explanations of the algorithms used in the Ring Sizer measurement system.
-
----
-
-## Table of Contents
-
-1. [Credit Card Detection](#credit-card-detection)
-   - [Multi-Strategy Detection](#multi-strategy-detection)
-   - [Candidate Scoring & Selection](#candidate-scoring--selection)
-2. [Future Sections](#future-sections)
-
----
-
-## Credit Card Detection
+# Credit Card Detection
 
 The credit card detection system uses a **multi-strategy approach** to robustly detect credit cards under varying conditions (lighting, orientation, background, camera settings). All strategies run in parallel and their results are combined for final selection.
 
-### Overview
+**Module:** `src/card_detection.py`
+
+## Overview
 
 ```
 Input Image
@@ -647,19 +634,12 @@ Best Score ≥ 0.3?
 
 ---
 
-## Future Sections
+**Related Documentation:**
+- [03-scale-calibration.md](03-scale-calibration.md) - Using detected card for px/cm conversion
+- [Algorithm Index](README.md) - All algorithm documentation
 
-The following algorithm sections will be added in future updates:
-
-- **Scale Calibration** - Converting pixels to centimeters using detected card
-- **Hand & Finger Segmentation** - MediaPipe-based finger isolation
-- **Finger Axis Estimation** - PCA-based principal axis calculation
-- **Ring Zone Localization** - Defining the 15%-25% measurement zone
-- **Width Measurement** - Cross-section sampling and median calculation
-- **Confidence Scoring** - Multi-factor quality assessment
+**Source Code:** `src/card_detection.py`
 
 ---
 
-**Document Version:** 1.0
 **Last Updated:** 2026-02-03
-**Author:** Claude Code (Anthropic)
