@@ -232,7 +232,13 @@ def measure_finger(
     view_angle_ok = scale_confidence > 0.9
 
     # Phase 4: Hand & finger segmentation
-    hand_data = segment_hand(image)
+    # Create finger segmentation debug subdirectory if debug enabled
+    finger_debug_dir = None
+    if debug_path is not None:
+        from pathlib import Path
+        finger_debug_dir = str(Path(debug_path).parent / "finger_segmentation_debug")
+
+    hand_data = segment_hand(image, debug_dir=finger_debug_dir)
 
     if hand_data is None:
         print("No hand detected in image")
@@ -248,7 +254,8 @@ def measure_finger(
 
     # Isolate the target finger
     h, w = image.shape[:2]
-    finger_data = isolate_finger(hand_data, finger=finger_index, image_shape=(h, w))
+    finger_data = isolate_finger(hand_data, finger=finger_index, image_shape=(h, w),
+                                 image=image, debug_dir=finger_debug_dir)
 
     if finger_data is None:
         print(f"Could not isolate finger: {finger_index}")
@@ -263,7 +270,7 @@ def measure_finger(
     print(f"Finger isolated: {finger_data['finger_name']}")
 
     # Clean the finger mask
-    cleaned_mask = clean_mask(finger_data["mask"])
+    cleaned_mask = clean_mask(finger_data["mask"], debug_dir=finger_debug_dir)
 
     if cleaned_mask is None:
         print("Finger mask too small or invalid")
@@ -276,7 +283,7 @@ def measure_finger(
         )
 
     # Extract finger contour
-    contour = get_finger_contour(cleaned_mask)
+    contour = get_finger_contour(cleaned_mask, debug_dir=finger_debug_dir)
 
     if contour is None:
         print("Could not extract finger contour")

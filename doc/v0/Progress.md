@@ -280,3 +280,95 @@ class Layout:
 **Testing**: Verified with test.sh - all visualizations (card detection debug images and final overlay) render correctly with new constants.
 
 ---
+
+## Enhancement: Finger Segmentation Debug Visualization ✅
+**Date:** 2026-02-03
+
+**Content**: Added comprehensive 24-image debug pipeline for finger segmentation (Phase 4), similar to card detection debug system.
+
+**Sections Added:**
+
+**Phase A: Hand Detection (6 images):**
+- 01: Original input image
+- 02: Resized image (if downsampled for MediaPipe)
+- 03: 21 hand landmarks overlay with numbering
+- 04: Hand skeleton with landmark connections
+- 05: Detection metadata (confidence, handedness, rotation)
+- 06: Selected hand highlight (multi-hand scenarios - not always present)
+
+**Phase B: Hand Mask Generation (6 images):**
+- 07: Convex hull outline around landmarks
+- 08: Individual finger regions colored (thumb=red, index=cyan, middle=yellow, ring=magenta, pinky=orange)
+- 09: Raw combined hand mask (before morphology)
+- 10: After morphological closing (gap filling)
+- 11: After morphological opening (noise removal)
+- 12: Final hand mask with green tint
+
+**Phase C: Finger Isolation (6 images):**
+- 13: Extension scores for each finger (auto-selection logic)
+- 14: Selected finger's 4 landmarks (MCP, PIP, DIP, TIP)
+- 15: Finger polygon construction showing left/right edges
+- 16: Palm extension region (toward wrist) with direction vector
+- 17: Raw finger mask (before cleaning)
+- 18: Finger mask overlay on original (semi-transparent magenta)
+
+**Phase D: Mask Cleaning (6 images):**
+- 19: Connected components labeled with colors and statistics
+- 20: Largest component selected
+- 21: After morphological closing
+- 22: After morphological opening
+- 23: After Gaussian blur + threshold
+- 24: Final cleaned mask
+
+**Implementation Details:**
+
+**New Helper Functions:**
+- `save_debug_image()` - Save with compression and downsampling
+- `draw_landmarks_overlay()` - Draw 21 numbered landmark points
+- `draw_hand_skeleton()` - Draw MediaPipe hand connections
+- `draw_detection_info()` - Display confidence, handedness, rotation
+- `draw_finger_regions()` - Color-code individual fingers
+- `draw_extension_scores()` - Visualize auto-selection logic
+- `draw_component_stats()` - Label connected components with areas
+
+**Modified Functions:**
+- `segment_hand()` - Added `debug_dir` parameter, saves Phase A & B outputs
+- `_create_hand_mask()` - Added debug outputs for mask generation steps
+- `isolate_finger()` - Added `image` and `debug_dir` parameters, saves Phase C outputs
+- `_create_finger_mask()` - Added debug outputs for polygon construction
+- `clean_mask()` - Added `debug_dir` parameter, saves Phase D outputs
+- `get_finger_contour()` - Added `debug_dir` parameter (contours shown in main overlay)
+
+**Constants Integration:**
+- Imported visualization constants from `src/viz_constants.py`
+- Added `HAND_CONNECTIONS` for skeleton drawing
+- Added `FINGER_COLORS` dict for consistent color coding
+
+**measure_finger.py Updates:**
+- Created `finger_segmentation_debug/` subdirectory when `--debug` flag used
+- Passed `debug_dir` through all finger segmentation functions
+- Passed `image` to isolation functions for visual debug overlays
+
+**Output Structure:**
+- Directory: `output/finger_segmentation_debug/`
+- Format: 24 numbered PNG images with descriptive filenames
+- Compression: PNG level 6, downsampled to max 1920px
+- File sizes: ~5KB (masks) to ~1.7MB (full overlays)
+
+**Benefits:**
+- ✅ **Hand detection debugging** - Visualize MediaPipe landmarks and rotation correction
+- ✅ **Finger selection transparency** - See extension scores in auto mode
+- ✅ **Mask quality assessment** - Track mask generation and cleaning steps
+- ✅ **Width estimation validation** - Understand polygon construction logic
+- ✅ **Morphology debugging** - Compare before/after each operation
+- ✅ **Educational value** - Complete visual guide to segmentation pipeline
+
+**Testing**:
+- Successfully tested with `input/test_sample2.jpg`
+- All 24 debug images generated correctly
+- Integration with existing card detection debug system
+- No performance impact when debug disabled
+
+**Result**: Comprehensive debug visualization matching card detection quality, enabling deep inspection of finger segmentation pipeline.
+
+---

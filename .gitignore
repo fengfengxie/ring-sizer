@@ -20,6 +20,7 @@ output/*.png
 output/*.jpg
 output/intermediate/
 output/card_detection_debug/
+output/finger_segmentation_debug/
 
 # Downloaded models (auto-downloaded on first run)
 model/*.task
