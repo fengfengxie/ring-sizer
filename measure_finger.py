@@ -18,17 +18,17 @@ from typing import Optional, Dict, Any, Literal
 import cv2
 import numpy as np
 
-from utils.image_quality import assess_image_quality
-from utils.card_detection import detect_credit_card, compute_scale_factor
-from utils.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
-from utils.geometry import estimate_finger_axis, localize_ring_zone, compute_cross_section_width
-from utils.confidence import (
+from src.image_quality import assess_image_quality
+from src.card_detection import detect_credit_card, compute_scale_factor
+from src.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
+from src.geometry import estimate_finger_axis, localize_ring_zone, compute_cross_section_width
+from src.confidence import (
     compute_card_confidence,
     compute_finger_confidence,
     compute_measurement_confidence,
     compute_overall_confidence,
 )
-from utils.visualization import create_debug_visualization
+from src.visualization import create_debug_visualization
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]

@@ -34,8 +34,8 @@ git clone https://github.com/yourusername/ring-sizer.git
 cd ring-sizer
 
 # Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -45,9 +45,9 @@ pip install -r requirements.txt
 
 ```bash
 python measure_finger.py \
-  --input samples/test_image.jpg \
-  --output outputs/result.json \
-  --debug outputs/debug_overlay.png
+  --input input/test_image.jpg \
+  --output output/result.json \
+  --debug output/debug_overlay.png
 ```
 
 ## 📋 Usage Examples

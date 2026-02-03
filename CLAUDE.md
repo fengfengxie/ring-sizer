@@ -18,7 +18,7 @@ For tasks of **bug fixing**:
 4. Commit with a clear, concise message
 
 For tasks of **reboot** from a new codex session:
-1. Read PRD.md, Plan.md, Progress.md.
+1. Read doc/v0/PRD.md, doc/v0/Plan.md, doc/v0/Progress.md.
 2. Assume this is a continuation of an existing project.
 3. Summarize your understanding of the current state and propose the next concrete step without writing code yet.
 
@@ -38,8 +38,8 @@ Ring Sizer is a **local, terminal-executable computer vision program** that meas
 ### Installation
 ```bash
 # Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -48,13 +48,13 @@ pip install -r requirements.txt
 ### Running the Program
 ```bash
 # Basic measurement
-python measure_finger.py --input samples/test_image.jpg --output outputs/result.json
+python measure_finger.py --input input/test_image.jpg --output output/result.json
 
 # With debug visualization
 python measure_finger.py \
-  --input samples/test_image.jpg \
-  --output outputs/result.json \
-  --debug outputs/debug_overlay.png
+  --input input/test_image.jpg \
+  --output output/result.json \
+  --debug output/debug_overlay.png
 
 # Specify finger and confidence threshold
 python measure_finger.py \
@@ -83,7 +83,7 @@ The measurement pipeline follows a strict sequential flow:
 
 ### Module Structure
 
-The codebase is organized into focused utility modules in `utils/`:
+The codebase is organized into focused utility modules in `src/`:
 
 | Module | Primary Responsibilities |
 |--------|--------------------------|
