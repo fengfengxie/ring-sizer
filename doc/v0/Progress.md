@@ -193,3 +193,90 @@ doc/v0/algorithms/
 **Result**: Cleaner, more maintainable documentation architecture following best practices.
 
 ---
+
+## Refactoring: Centralized Visualization Constants ✅
+**Date:** 2026-02-03
+
+**Issue**: Duplicate font, color, and size constants scattered across `src/card_detection.py` and `src/visualization.py`, with hardcoded values making maintenance difficult.
+
+**Solution**: Created centralized constants module `src/viz_constants.py` with organized class structure:
+
+**New Module Structure:**
+```python
+# src/viz_constants.py (369 lines)
+
+# Font settings
+FONT_FACE = cv2.FONT_HERSHEY_SIMPLEX
+
+class FontScale:
+    TITLE = 3.5          # Main titles
+    SUBTITLE = 2.5       # Section headers
+    LABEL = 1.8          # Inline labels
+    BODY = 1.5           # Body text
+    SMALL = 1.0          # Small text
+
+class FontThickness:
+    TITLE = 7
+    SUBTITLE = 5
+    LABEL = 4
+    BODY = 2
+    # Outline variants for text effects
+    TITLE_OUTLINE = 10
+    SUBTITLE_OUTLINE = 8
+
+class Color:
+    # Basic colors (BGR format)
+    WHITE = (255, 255, 255)
+    BLACK = (0, 0, 0)
+    RED = (0, 0, 255)
+    GREEN = (0, 255, 0)
+    BLUE = (255, 0, 0)
+    # Semantic colors
+    CARD = GREEN
+    FINGER = MAGENTA
+    TEXT_PRIMARY = WHITE
+    TEXT_SUCCESS = GREEN
+    TEXT_ERROR = RED
+
+class StrategyColor:
+    CANNY = Color.CYAN
+    ADAPTIVE = Color.ORANGE
+    OTSU = Color.MAGENTA
+    COLOR_BASED = Color.GREEN
+
+class Size:
+    CORNER_RADIUS = 8
+    ENDPOINT_RADIUS = 15
+    CONTOUR_THICK = 5
+    LINE_THICK = 4
+
+class Layout:
+    TITLE_Y = 100
+    SUBTITLE_Y = 200
+    LINE_SPACING = 100
+    TEXT_OFFSET_X = 20
+    TEXT_OFFSET_Y = 25
+    RESULT_TEXT_Y_START = 60
+    RESULT_TEXT_LINE_HEIGHT = 55
+```
+
+**Helper Functions Added:**
+- `get_scaled_font_size()` - Scale font based on image dimensions
+- `create_outlined_text()` - Draw text with outline for visibility
+- `validate_color()` - Validate BGR color tuples
+
+**Files Refactored:**
+- `src/card_detection.py`: Removed 26 lines of duplicate constants, updated all draw functions
+- `src/visualization.py`: Removed 35 lines of duplicate constants, updated all visualization functions
+
+**Benefits:**
+- ✅ **Single source of truth** - All visualization constants in one file
+- ✅ **Semantic naming** - Color.CARD, Color.FINGER instead of hardcoded BGR tuples
+- ✅ **Easy theme changes** - Modify colors/fonts globally in one place
+- ✅ **Consistent styling** - All algorithms will use same visual language
+- ✅ **Better maintainability** - No scattered magic numbers
+- ✅ **Scalability** - Future algorithms can import and use same constants
+
+**Testing**: Verified with test.sh - all visualizations (card detection debug images and final overlay) render correctly with new constants.
+
+---

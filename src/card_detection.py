@@ -13,6 +13,17 @@ import numpy as np
 from typing import Optional, Tuple, Dict, Any, List
 from pathlib import Path
 
+# Import shared visualization constants
+from .viz_constants import (
+    FONT_FACE,
+    Color,
+    StrategyColor,
+    FontScale,
+    FontThickness,
+    Size,
+    Layout,
+)
+
 # Standard credit card dimensions (ISO/IEC 7810 ID-1)
 CARD_WIDTH_MM = 85.60
 CARD_HEIGHT_MM = 53.98
@@ -24,33 +35,6 @@ CARD_ASPECT_RATIO = CARD_WIDTH_MM / CARD_HEIGHT_MM  # ~1.586
 MIN_CARD_AREA_RATIO = 0.01  # Card must be at least 1% of image area
 MAX_CARD_AREA_RATIO = 0.5   # Card must be at most 50% of image area
 CORNER_ANGLE_TOLERANCE = 25  # Degrees deviation from 90° allowed
-
-# Debug visualization constants
-DEBUG_FONT_FACE = cv2.FONT_HERSHEY_SIMPLEX
-DEBUG_TITLE_FONT_SCALE = 5
-DEBUG_SUBTITLE_FONT_SCALE = 5
-DEBUG_LABEL_FONT_SCALE = 5
-DEBUG_TITLE_THICKNESS = 7
-DEBUG_SUBTITLE_THICKNESS = 5
-DEBUG_LABEL_THICKNESS = 4
-DEBUG_TITLE_OUTLINE_THICKNESS = 10
-DEBUG_SUBTITLE_OUTLINE_THICKNESS = 8
-DEBUG_LABEL_OUTLINE_THICKNESS = 6
-DEBUG_CONTOUR_THICKNESS = 3
-DEBUG_CORNER_RADIUS = 8
-DEBUG_TITLE_Y = 100
-DEBUG_SUBTITLE_Y = 200
-DEBUG_LINE_SPACING = 100
-
-# Debug visualization colors (BGR)
-DEBUG_COLOR_WHITE = (255, 255, 255)
-DEBUG_COLOR_BLACK = (0, 0, 0)
-DEBUG_COLOR_GREEN = (0, 255, 0)
-DEBUG_COLOR_YELLOW = (0, 255, 255)
-DEBUG_COLOR_CYAN = (255, 255, 0)
-DEBUG_COLOR_ORANGE = (255, 128, 0)
-DEBUG_COLOR_MAGENTA = (255, 0, 255)
-DEBUG_COLOR_PINK = (128, 128, 255)
 
 
 def order_corners(corners: np.ndarray) -> np.ndarray:
@@ -242,7 +226,7 @@ def draw_contours_overlay(
     image: np.ndarray,
     contours: List[np.ndarray],
     title: str,
-    color: Tuple[int, int, int] = DEBUG_COLOR_GREEN,
+    color: Tuple[int, int, int] = None,
 ) -> np.ndarray:
     """
     Draw contours on an image overlay.
@@ -251,11 +235,14 @@ def draw_contours_overlay(
         image: Original image
         contours: List of contours to draw
         title: Title for the visualization
-        color: BGR color for contours
+        color: BGR color for contours (default: Color.GREEN)
 
     Returns:
         Annotated image
     """
+    if color is None:
+        color = Color.GREEN
+
     overlay = image.copy()
 
     # Draw all contours
@@ -263,31 +250,31 @@ def draw_contours_overlay(
         if len(contour) == 4:
             # Draw quadrilateral
             pts = contour.reshape(4, 2).astype(np.int32)
-            cv2.polylines(overlay, [pts], True, color, DEBUG_CONTOUR_THICKNESS)
+            cv2.polylines(overlay, [pts], True, color, Size.CONTOUR_NORMAL)
 
     # Add title with outline for visibility
     cv2.putText(
-        overlay, title, (20, DEBUG_TITLE_Y),
-        DEBUG_FONT_FACE, DEBUG_TITLE_FONT_SCALE, DEBUG_COLOR_WHITE,
-        DEBUG_TITLE_OUTLINE_THICKNESS, cv2.LINE_AA
+        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
+        FONT_FACE, FontScale.TITLE, Color.WHITE,
+        FontThickness.TITLE_OUTLINE, cv2.LINE_AA
     )
     cv2.putText(
-        overlay, title, (20, DEBUG_TITLE_Y),
-        DEBUG_FONT_FACE, DEBUG_TITLE_FONT_SCALE, color,
-        DEBUG_TITLE_THICKNESS, cv2.LINE_AA
+        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
+        FONT_FACE, FontScale.TITLE, color,
+        FontThickness.TITLE, cv2.LINE_AA
     )
 
     # Add count with outline
     count_text = f"Candidates: {len(contours)}"
     cv2.putText(
-        overlay, count_text, (20, DEBUG_SUBTITLE_Y),
-        DEBUG_FONT_FACE, DEBUG_SUBTITLE_FONT_SCALE, DEBUG_COLOR_WHITE,
-        DEBUG_SUBTITLE_OUTLINE_THICKNESS, cv2.LINE_AA
+        overlay, count_text, (Layout.TEXT_OFFSET_X, Layout.SUBTITLE_Y),
+        FONT_FACE, FontScale.SUBTITLE, Color.WHITE,
+        FontThickness.SUBTITLE_OUTLINE, cv2.LINE_AA
     )
     cv2.putText(
-        overlay, count_text, (20, DEBUG_SUBTITLE_Y),
-        DEBUG_FONT_FACE, DEBUG_SUBTITLE_FONT_SCALE, color,
-        DEBUG_SUBTITLE_THICKNESS, cv2.LINE_AA
+        overlay, count_text, (Layout.TEXT_OFFSET_X, Layout.SUBTITLE_Y),
+        FONT_FACE, FontScale.SUBTITLE, color,
+        FontThickness.SUBTITLE, cv2.LINE_AA
     )
 
     return overlay
@@ -313,11 +300,11 @@ def draw_candidates_with_scores(
 
     # Color palette for candidates (different colors for ranking)
     colors = [
-        DEBUG_COLOR_GREEN,    # Green - best
-        DEBUG_COLOR_YELLOW,   # Yellow
-        DEBUG_COLOR_ORANGE,   # Orange
-        DEBUG_COLOR_MAGENTA,  # Magenta
-        DEBUG_COLOR_PINK      # Pink
+        Color.GREEN,    # Green - best
+        Color.YELLOW,   # Yellow
+        Color.ORANGE,   # Orange
+        Color.MAGENTA,  # Magenta
+        Color.PINK      # Pink
     ]
 
     for idx, (corners, score, details) in enumerate(candidates):
@@ -325,11 +312,11 @@ def draw_candidates_with_scores(
 
         # Draw quadrilateral
         pts = corners.reshape(4, 2).astype(np.int32)
-        cv2.polylines(overlay, [pts], True, color, DEBUG_CONTOUR_THICKNESS)
+        cv2.polylines(overlay, [pts], True, color, Size.CONTOUR_NORMAL)
 
         # Draw corner circles
         for pt in pts:
-            cv2.circle(overlay, tuple(pt), DEBUG_CORNER_RADIUS, color, -1)
+            cv2.circle(overlay, tuple(pt), Size.CORNER_RADIUS, color, -1)
 
         # Prepare annotation text
         if score > 0:
@@ -346,25 +333,25 @@ def draw_candidates_with_scores(
         # Draw text with outline for visibility
         cv2.putText(
             overlay, text, text_pos,
-            DEBUG_FONT_FACE, DEBUG_LABEL_FONT_SCALE, DEBUG_COLOR_BLACK,
-            DEBUG_LABEL_OUTLINE_THICKNESS, cv2.LINE_AA
+            FONT_FACE, FontScale.LABEL, Color.BLACK,
+            FontThickness.LABEL_OUTLINE, cv2.LINE_AA
         )
         cv2.putText(
             overlay, text, text_pos,
-            DEBUG_FONT_FACE, DEBUG_LABEL_FONT_SCALE, color,
-            DEBUG_LABEL_THICKNESS, cv2.LINE_AA
+            FONT_FACE, FontScale.LABEL, color,
+            FontThickness.LABEL, cv2.LINE_AA
         )
 
     # Add title with outline
     cv2.putText(
-        overlay, title, (20, DEBUG_TITLE_Y),
-        DEBUG_FONT_FACE, DEBUG_TITLE_FONT_SCALE, DEBUG_COLOR_WHITE,
-        DEBUG_TITLE_OUTLINE_THICKNESS, cv2.LINE_AA
+        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
+        FONT_FACE, FontScale.TITLE, Color.WHITE,
+        FontThickness.TITLE_OUTLINE, cv2.LINE_AA
     )
     cv2.putText(
-        overlay, title, (20, DEBUG_TITLE_Y),
-        DEBUG_FONT_FACE, DEBUG_TITLE_FONT_SCALE, DEBUG_COLOR_CYAN,
-        DEBUG_TITLE_THICKNESS, cv2.LINE_AA
+        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
+        FONT_FACE, FontScale.TITLE, Color.CYAN,
+        FontThickness.TITLE, cv2.LINE_AA
     )
 
     return overlay
@@ -486,7 +473,7 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
 
     # Save Canny contours overlay
     if debug_dir and canny_candidates:
-        canny_overlay = draw_contours_overlay(image, canny_candidates, "Canny Edge Detection", (0, 255, 255))
+        canny_overlay = draw_contours_overlay(image, canny_candidates, "Canny Edge Detection", StrategyColor.CANNY)
         save_debug_image(canny_overlay, "08_canny_contours.png", debug_dir)
 
     # Strategy 2: Adaptive thresholding (for varying lighting)
@@ -515,7 +502,7 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
 
     # Save adaptive contours overlay
     if debug_dir and adaptive_candidates:
-        adaptive_overlay = draw_contours_overlay(image, adaptive_candidates, "Adaptive Thresholding", (255, 128, 0))
+        adaptive_overlay = draw_contours_overlay(image, adaptive_candidates, "Adaptive Thresholding", StrategyColor.ADAPTIVE)
         save_debug_image(adaptive_overlay, "11_adaptive_contours.png", debug_dir)
 
     # Strategy 3: Otsu's thresholding
@@ -535,7 +522,7 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
 
     # Save Otsu contours overlay
     if debug_dir and otsu_candidates:
-        otsu_overlay = draw_contours_overlay(image, otsu_candidates, "Otsu Thresholding", (255, 0, 255))
+        otsu_overlay = draw_contours_overlay(image, otsu_candidates, "Otsu Thresholding", StrategyColor.OTSU)
         save_debug_image(otsu_overlay, "14_otsu_contours.png", debug_dir)
 
     # Strategy 4: Color-based segmentation (gray card on light background)
@@ -564,12 +551,12 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
 
     # Save color-based contours overlay
     if debug_dir and color_candidates:
-        color_overlay = draw_contours_overlay(image, color_candidates, "Color-Based Detection", (0, 255, 0))
+        color_overlay = draw_contours_overlay(image, color_candidates, "Color-Based Detection", StrategyColor.COLOR_BASED)
         save_debug_image(color_overlay, "18_color_contours.png", debug_dir)
 
     # Save all candidates overlay
     if debug_dir and candidates:
-        all_overlay = draw_contours_overlay(image, candidates, "All Candidates", (128, 128, 255))
+        all_overlay = draw_contours_overlay(image, candidates, "All Candidates", StrategyColor.ALL_CANDIDATES)
         save_debug_image(all_overlay, "19_all_candidates.png", debug_dir)
 
     return candidates
@@ -646,14 +633,14 @@ def detect_credit_card(
     if debug_dir:
         final_overlay = image.copy()
         corners = best_result["corners"].astype(np.int32)
-        cv2.polylines(final_overlay, [corners], True, DEBUG_COLOR_GREEN, DEBUG_CONTOUR_THICKNESS + 1)
+        cv2.polylines(final_overlay, [corners], True, Color.GREEN, Size.CONTOUR_THICK)
 
         # Draw corners
         for pt in corners:
-            cv2.circle(final_overlay, tuple(pt), DEBUG_CORNER_RADIUS + 2, (0, 0, 255), -1)
+            cv2.circle(final_overlay, tuple(pt), Size.CORNER_RADIUS + 2, Color.RED, -1)
 
         # Add details text
-        text_y = DEBUG_TITLE_Y
+        text_y = Layout.TITLE_Y
         details_text = [
             "Final Detection",
             f"Score: {best_score:.3f}",
@@ -663,16 +650,16 @@ def detect_credit_card(
 
         for text in details_text:
             cv2.putText(
-                final_overlay, text, (20, text_y),
-                DEBUG_FONT_FACE, DEBUG_SUBTITLE_FONT_SCALE, DEBUG_COLOR_WHITE,
-                DEBUG_SUBTITLE_OUTLINE_THICKNESS, cv2.LINE_AA
+                final_overlay, text, (Layout.TEXT_OFFSET_X, text_y),
+                FONT_FACE, FontScale.SUBTITLE, Color.WHITE,
+                FontThickness.SUBTITLE_OUTLINE, cv2.LINE_AA
             )
             cv2.putText(
-                final_overlay, text, (20, text_y),
-                DEBUG_FONT_FACE, DEBUG_SUBTITLE_FONT_SCALE, DEBUG_COLOR_GREEN,
-                DEBUG_SUBTITLE_THICKNESS, cv2.LINE_AA
+                final_overlay, text, (Layout.TEXT_OFFSET_X, text_y),
+                FONT_FACE, FontScale.SUBTITLE, Color.GREEN,
+                FontThickness.SUBTITLE, cv2.LINE_AA
             )
-            text_y += DEBUG_LINE_SPACING
+            text_y += Layout.LINE_SPACING
 
         save_debug_image(final_overlay, "21_final_detection.png", debug_dir)
         print(f"  Saved 21 debug images")
