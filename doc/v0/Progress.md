@@ -134,3 +134,32 @@ Added 21-image debug pipeline visualizing all intermediate card detection steps:
 **Result**: Cleaner, more scalable project structure following Python best practices.
 
 ---
+
+## Documentation: Algorithm.md Created ✅
+**Date:** 2026-02-03
+
+**Content**: Created comprehensive technical documentation for card detection algorithms.
+
+**Sections Added**:
+1. **Multi-Strategy Detection** (4 strategies):
+   - Strategy 1: Canny Edge Detection (5 threshold configs)
+   - Strategy 2: Adaptive Thresholding (4 block sizes)
+   - Strategy 3: Otsu's Thresholding (automatic threshold)
+   - Strategy 4: Color-Based Segmentation (HSV filtering)
+
+2. **Candidate Scoring & Selection**:
+   - Validation filters (area, aspect ratio, angles, convexity)
+   - Scoring function (40% area + 30% ratio + 30% angle)
+   - Selection process with 0.3 minimum threshold
+
+**Details Documented**:
+- Algorithm pseudocode for each strategy
+- Parameter values and rationale
+- Strengths and weaknesses
+- Debug output file mapping
+- Score calculation formulas
+- Complete pipeline visualization
+
+**Location**: `doc/v0/Algorithm.md`
+
+---

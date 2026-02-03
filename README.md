@@ -50,6 +50,21 @@ python measure_finger.py \
   --debug output/debug_overlay.png
 ```
 
+### Quick Test
+
+For quick testing without typing long commands:
+
+```bash
+# Auto-detect test image and generate debug output
+./script/test.sh
+
+# Test specific image
+./script/test.sh input/my_image.jpg
+
+# Run without debug visualization (faster)
+./script/test.sh --no-debug
+```
+
 ## 📋 Usage Examples
 
 ### Measure with default settings

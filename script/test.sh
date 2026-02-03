@@ -1,0 +1,135 @@
+#!/bin/bash
+# Quick test script for ring-sizer
+# Usage:
+#   ./script/test.sh              - Run basic test with debug output
+#   ./script/test.sh [image]      - Test with specific image
+#   ./script/test.sh --no-debug   - Run without debug visualization
+
+set -e  # Exit on error
+
+# Colors for output
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Get script directory and project root
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# Change to project root
+cd "$PROJECT_ROOT"
+
+# Python executable
+PYTHON=".venv/bin/python"
+
+# Check if virtual environment exists
+if [ ! -f "$PYTHON" ]; then
+    echo -e "${YELLOW}Virtual environment not found. Creating...${NC}"
+    python3 -m venv .venv
+    echo -e "${GREEN}Installing dependencies...${NC}"
+    .venv/bin/pip install -r requirements.txt
+fi
+
+# Default values
+INPUT_IMAGE=""
+OUTPUT_JSON="output/test_result.json"
+DEBUG_OUTPUT="output/test_debug.png"
+ENABLE_DEBUG=true
+
+# Parse arguments
+if [ $# -gt 0 ]; then
+    if [ "$1" == "--no-debug" ]; then
+        ENABLE_DEBUG=false
+    elif [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
+        echo "Usage: ./script/test.sh [OPTIONS] [IMAGE]"
+        echo ""
+        echo "Options:"
+        echo "  --no-debug          Run without debug visualization"
+        echo "  --help, -h          Show this help message"
+        echo ""
+        echo "Examples:"
+        echo "  ./script/test.sh                        # Use first available test image"
+        echo "  ./script/test.sh input/my_image.jpg     # Test with specific image"
+        echo "  ./script/test.sh --no-debug             # Skip debug output"
+        exit 0
+    else
+        INPUT_IMAGE="$1"
+    fi
+fi
+
+# Find first available test image if not specified
+if [ -z "$INPUT_IMAGE" ]; then
+    echo -e "${BLUE}Looking for test images in input/...${NC}"
+
+    # Try to find any image file
+    for ext in jpg jpeg png heic; do
+        INPUT_IMAGE=$(find input/ -maxdepth 1 -type f -iname "*.$ext" | head -1)
+        if [ -n "$INPUT_IMAGE" ]; then
+            break
+        fi
+    done
+
+    if [ -z "$INPUT_IMAGE" ]; then
+        echo -e "${YELLOW}No test images found in input/ directory${NC}"
+        echo "Please add a test image to input/ or specify one as an argument:"
+        echo "  ./script/test.sh path/to/image.jpg"
+        exit 1
+    fi
+fi
+
+# Check if input file exists
+if [ ! -f "$INPUT_IMAGE" ]; then
+    echo -e "${YELLOW}Error: Input file not found: $INPUT_IMAGE${NC}"
+    exit 1
+fi
+
+# Create output directory if it doesn't exist
+mkdir -p output
+
+# Build command
+CMD="$PYTHON measure_finger.py --input $INPUT_IMAGE --output $OUTPUT_JSON"
+
+if [ "$ENABLE_DEBUG" = true ]; then
+    CMD="$CMD --debug $DEBUG_OUTPUT"
+fi
+
+# Print test info
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Ring Sizer Quick Test${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${BLUE}Input:${NC}  $INPUT_IMAGE"
+echo -e "${BLUE}Output:${NC} $OUTPUT_JSON"
+if [ "$ENABLE_DEBUG" = true ]; then
+    echo -e "${BLUE}Debug:${NC}  $DEBUG_OUTPUT"
+fi
+echo -e "${GREEN}========================================${NC}"
+echo ""
+
+# Run the measurement
+$CMD
+
+# Print results
+echo ""
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Test Complete!${NC}"
+echo -e "${GREEN}========================================${NC}"
+
+if [ -f "$OUTPUT_JSON" ]; then
+    echo -e "${BLUE}Results:${NC}"
+    cat "$OUTPUT_JSON" | python3 -m json.tool
+    echo ""
+fi
+
+if [ "$ENABLE_DEBUG" = true ] && [ -f "$DEBUG_OUTPUT" ]; then
+    echo -e "${BLUE}Debug visualization saved to:${NC} $DEBUG_OUTPUT"
+    echo ""
+
+    # Try to open the debug image (macOS)
+    if command -v open &> /dev/null; then
+        echo -e "${YELLOW}Opening debug visualization...${NC}"
+        open "$DEBUG_OUTPUT"
+    fi
+fi
+
+echo -e "${GREEN}========================================${NC}"
