@@ -13,6 +13,9 @@ import numpy as np
 from typing import Optional, Tuple, Dict, Any, List
 from pathlib import Path
 
+# Import debug observer and drawing functions
+from .debug_observer import DebugObserver, draw_contours_overlay, draw_candidates_with_scores
+
 # Import shared visualization constants
 from .viz_constants import (
     FONT_FACE,
@@ -201,162 +204,6 @@ def score_card_candidate(
     return score, details
 
 
-def save_debug_image(image: np.ndarray, filename: str, debug_dir: Optional[str]) -> None:
-    """Save a debug image with consistent formatting and compression."""
-    if debug_dir is None:
-        return
-
-    Path(debug_dir).mkdir(parents=True, exist_ok=True)
-    output_path = Path(debug_dir) / filename
-
-    # Downsample large images to reduce file size
-    h, w = image.shape[:2]
-    max_dimension = 1920  # Max width or height
-    if max(h, w) > max_dimension:
-        scale = max_dimension / max(h, w)
-        new_w = int(w * scale)
-        new_h = int(h * scale)
-        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    # Use PNG compression for smaller file sizes
-    cv2.imwrite(str(output_path), image, [cv2.IMWRITE_PNG_COMPRESSION, 6])
-
-
-def draw_contours_overlay(
-    image: np.ndarray,
-    contours: List[np.ndarray],
-    title: str,
-    color: Tuple[int, int, int] = None,
-) -> np.ndarray:
-    """
-    Draw contours on an image overlay.
-
-    Args:
-        image: Original image
-        contours: List of contours to draw
-        title: Title for the visualization
-        color: BGR color for contours (default: Color.GREEN)
-
-    Returns:
-        Annotated image
-    """
-    if color is None:
-        color = Color.GREEN
-
-    overlay = image.copy()
-
-    # Draw all contours
-    for contour in contours:
-        if len(contour) == 4:
-            # Draw quadrilateral
-            pts = contour.reshape(4, 2).astype(np.int32)
-            cv2.polylines(overlay, [pts], True, color, Size.CONTOUR_NORMAL)
-
-    # Add title with outline for visibility
-    cv2.putText(
-        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
-        FONT_FACE, FontScale.TITLE, Color.WHITE,
-        FontThickness.TITLE_OUTLINE, cv2.LINE_AA
-    )
-    cv2.putText(
-        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
-        FONT_FACE, FontScale.TITLE, color,
-        FontThickness.TITLE, cv2.LINE_AA
-    )
-
-    # Add count with outline
-    count_text = f"Candidates: {len(contours)}"
-    cv2.putText(
-        overlay, count_text, (Layout.TEXT_OFFSET_X, Layout.SUBTITLE_Y),
-        FONT_FACE, FontScale.SUBTITLE, Color.WHITE,
-        FontThickness.SUBTITLE_OUTLINE, cv2.LINE_AA
-    )
-    cv2.putText(
-        overlay, count_text, (Layout.TEXT_OFFSET_X, Layout.SUBTITLE_Y),
-        FONT_FACE, FontScale.SUBTITLE, color,
-        FontThickness.SUBTITLE, cv2.LINE_AA
-    )
-
-    return overlay
-
-
-def draw_candidates_with_scores(
-    image: np.ndarray,
-    candidates: List[Tuple[np.ndarray, float, Dict[str, Any]]],
-    title: str,
-) -> np.ndarray:
-    """
-    Draw candidate contours with scores and details.
-
-    Args:
-        image: Original image
-        candidates: List of (corners, score, details) tuples
-        title: Title for the visualization
-
-    Returns:
-        Annotated image
-    """
-    overlay = image.copy()
-
-    # Color palette for candidates (different colors for ranking)
-    colors = [
-        Color.GREEN,    # Green - best
-        Color.YELLOW,   # Yellow
-        Color.ORANGE,   # Orange
-        Color.MAGENTA,  # Magenta
-        Color.PINK      # Pink
-    ]
-
-    for idx, (corners, score, details) in enumerate(candidates):
-        color = colors[idx % len(colors)]
-
-        # Draw quadrilateral
-        pts = corners.reshape(4, 2).astype(np.int32)
-        cv2.polylines(overlay, [pts], True, color, Size.CONTOUR_NORMAL)
-
-        # Draw corner circles
-        for pt in pts:
-            cv2.circle(overlay, tuple(pt), Size.CORNER_RADIUS, color, -1)
-
-        # Prepare annotation text
-        if score > 0:
-            aspect_ratio = details.get("aspect_ratio", 0)
-            area_ratio = details.get("area", 0) / (image.shape[0] * image.shape[1])
-            text = f"#{idx+1} Score:{score:.2f} AR:{aspect_ratio:.2f} Area:{area_ratio:.2%}"
-        else:
-            reject_reason = details.get("reject_reason", "unknown")
-            text = f"#{idx+1} REJECT: {reject_reason}"
-
-        # Position text near first corner
-        text_pos = (int(pts[0][0]) + 10, int(pts[0][1]) - 10)
-
-        # Draw text with outline for visibility
-        cv2.putText(
-            overlay, text, text_pos,
-            FONT_FACE, FontScale.LABEL, Color.BLACK,
-            FontThickness.LABEL_OUTLINE, cv2.LINE_AA
-        )
-        cv2.putText(
-            overlay, text, text_pos,
-            FONT_FACE, FontScale.LABEL, color,
-            FontThickness.LABEL, cv2.LINE_AA
-        )
-
-    # Add title with outline
-    cv2.putText(
-        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
-        FONT_FACE, FontScale.TITLE, Color.WHITE,
-        FontThickness.TITLE_OUTLINE, cv2.LINE_AA
-    )
-    cv2.putText(
-        overlay, title, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y),
-        FONT_FACE, FontScale.TITLE, Color.CYAN,
-        FontThickness.TITLE, cv2.LINE_AA
-    )
-
-    return overlay
-
-
 def refine_corners(gray: np.ndarray, corners: np.ndarray) -> Optional[np.ndarray]:
     """
     Refine corner positions to sub-pixel accuracy using cornerSubPix.
@@ -388,24 +235,31 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
 
     Args:
         image: Input BGR image
+        debug_dir: Optional directory to save debug images
 
     Returns:
         List of 4-point contour approximations
     """
+    # Create debug observer if debug mode enabled
+    observer = DebugObserver(debug_dir) if debug_dir else None
+    
     h, w = image.shape[:2]
     min_area = h * w * 0.01  # At least 1% of image
     max_area = h * w * 0.5   # At most 50% of image
 
     # Save original image
-    save_debug_image(image, "01_original.png", debug_dir)
+    if observer:
+        observer.save_stage("01_original", image)
 
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    save_debug_image(gray, "02_grayscale.png", debug_dir)
+    if observer:
+        observer.save_stage("02_grayscale", gray)
 
     # Apply bilateral filter to reduce noise while keeping edges
     filtered = cv2.bilateralFilter(gray, 11, 75, 75)
-    save_debug_image(filtered, "03_bilateral_filtered.png", debug_dir)
+    if observer:
+        observer.save_stage("03_bilateral_filtered", filtered)
 
     candidates = []
     canny_candidates = []
@@ -454,16 +308,16 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
         edges = cv2.Canny(filtered, canny_low, canny_high)
 
         # Save representative edge images
-        if idx in saved_canny_indices and debug_dir:
-            save_debug_image(edges, f"04_canny_{canny_low}_{canny_high}.png", debug_dir)
+        if idx in saved_canny_indices and observer:
+            observer.save_stage(f"04_canny_{canny_low}_{canny_high}", edges)
 
         # Morphological closing to connect edges
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         edges_morphed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
         # Save morphology result for best threshold
-        if idx == 2 and debug_dir:
-            save_debug_image(edges_morphed, "07_canny_morphology.png", debug_dir)
+        if idx == 2 and observer:
+            observer.save_stage("07_canny_morphology", edges_morphed)
 
         # Find all contours (not just external)
         contours, _ = cv2.findContours(edges_morphed, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
@@ -472,9 +326,9 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
         canny_candidates.extend(quads)
 
     # Save Canny contours overlay
-    if debug_dir and canny_candidates:
-        canny_overlay = draw_contours_overlay(image, canny_candidates, "Canny Edge Detection", StrategyColor.CANNY)
-        save_debug_image(canny_overlay, "08_canny_contours.png", debug_dir)
+    if observer and canny_candidates:
+        observer.draw_and_save("08_canny_contours", image,
+                             draw_contours_overlay, canny_candidates, "Canny Edge Detection", StrategyColor.CANNY)
 
     # Strategy 2: Adaptive thresholding (for varying lighting)
     adaptive_configs = [(11, 2), (21, 5), (31, 10), (51, 10)]
@@ -487,11 +341,11 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
         )
 
         # Save representative thresholded images
-        if idx in saved_adaptive and debug_dir:
+        if idx in saved_adaptive and observer:
             if idx == 0:
-                save_debug_image(thresh, "09_adaptive_11_2.png", debug_dir)
+                observer.save_stage("09_adaptive_11_2", thresh)
             elif idx == 2:
-                save_debug_image(thresh, "10_adaptive_31_10.png", debug_dir)
+                observer.save_stage("10_adaptive_31_10", thresh)
 
         # Invert if needed
         for img in [thresh, 255 - thresh]:
@@ -501,16 +355,18 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
             adaptive_candidates.extend(quads)
 
     # Save adaptive contours overlay
-    if debug_dir and adaptive_candidates:
-        adaptive_overlay = draw_contours_overlay(image, adaptive_candidates, "Adaptive Thresholding", StrategyColor.ADAPTIVE)
-        save_debug_image(adaptive_overlay, "11_adaptive_contours.png", debug_dir)
+    if observer and adaptive_candidates:
+        observer.draw_and_save("11_adaptive_contours", image,
+                             draw_contours_overlay, adaptive_candidates, "Adaptive Thresholding", StrategyColor.ADAPTIVE)
 
     # Strategy 3: Otsu's thresholding
     _, otsu = cv2.threshold(filtered, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    save_debug_image(otsu, "12_otsu_binary.png", debug_dir)
+    if observer:
+        observer.save_stage("12_otsu_binary", otsu)
 
     otsu_inverted = 255 - otsu
-    save_debug_image(otsu_inverted, "13_otsu_inverted.png", debug_dir)
+    if observer:
+        observer.save_stage("13_otsu_inverted", otsu_inverted)
 
     for img in [otsu, otsu_inverted]:
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -521,19 +377,21 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
         otsu_candidates.extend(quads)
 
     # Save Otsu contours overlay
-    if debug_dir and otsu_candidates:
-        otsu_overlay = draw_contours_overlay(image, otsu_candidates, "Otsu Thresholding", StrategyColor.OTSU)
-        save_debug_image(otsu_overlay, "14_otsu_contours.png", debug_dir)
+    if observer and otsu_candidates:
+        observer.draw_and_save("14_otsu_contours", image,
+                             draw_contours_overlay, otsu_candidates, "Otsu Thresholding", StrategyColor.OTSU)
 
     # Strategy 4: Color-based segmentation (gray card on light background)
     # Look for regions that are darker than the background
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     sat = hsv[:, :, 1]  # Saturation channel
-    save_debug_image(sat, "15_hsv_saturation.png", debug_dir)
+    if observer:
+        observer.save_stage("15_hsv_saturation", sat)
 
     # Low saturation = gray colors (like metallic card)
     _, low_sat_mask = cv2.threshold(sat, 30, 255, cv2.THRESH_BINARY_INV)
-    save_debug_image(low_sat_mask, "16_low_sat_mask.png", debug_dir)
+    if observer:
+        observer.save_stage("16_low_sat_mask", low_sat_mask)
 
     # Combine with value channel to find gray regions
     val = hsv[:, :, 2]
@@ -542,7 +400,8 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     gray_mask = cv2.morphologyEx(gray_mask, cv2.MORPH_CLOSE, kernel)
     gray_mask = cv2.morphologyEx(gray_mask, cv2.MORPH_OPEN, kernel)
-    save_debug_image(gray_mask, "17_gray_mask.png", debug_dir)
+    if observer:
+        observer.save_stage("17_gray_mask", gray_mask)
 
     contours, _ = cv2.findContours(gray_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     quads = extract_quads(contours, epsilon_factor=0.03)
@@ -550,14 +409,14 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
     color_candidates.extend(quads)
 
     # Save color-based contours overlay
-    if debug_dir and color_candidates:
-        color_overlay = draw_contours_overlay(image, color_candidates, "Color-Based Detection", StrategyColor.COLOR_BASED)
-        save_debug_image(color_overlay, "18_color_contours.png", debug_dir)
+    if observer and color_candidates:
+        observer.draw_and_save("18_color_contours", image,
+                             draw_contours_overlay, color_candidates, "Color-Based Detection", StrategyColor.COLOR_BASED)
 
     # Save all candidates overlay
-    if debug_dir and candidates:
-        all_overlay = draw_contours_overlay(image, candidates, "All Candidates", StrategyColor.ALL_CANDIDATES)
-        save_debug_image(all_overlay, "19_all_candidates.png", debug_dir)
+    if observer and candidates:
+        observer.draw_and_save("19_all_candidates", image,
+                             draw_contours_overlay, candidates, "All Candidates", StrategyColor.ALL_CANDIDATES)
 
     return candidates
 
@@ -584,7 +443,10 @@ def detect_credit_card(
         - aspect_ratio: Detected aspect ratio
         Or None if no card detected
     """
-    if debug_dir:
+    # Create debug observer if debug mode enabled
+    observer = DebugObserver(debug_dir) if debug_dir else None
+    
+    if observer:
         print(f"Saving card detection debug images to: {debug_dir}")
 
     h, w = image.shape[:2]
@@ -594,7 +456,7 @@ def detect_credit_card(
     candidates = find_card_contours(image, debug_dir=debug_dir)
 
     if not candidates:
-        if debug_dir:
+        if observer:
             print("  No candidates found")
         return None
 
@@ -620,17 +482,17 @@ def detect_credit_card(
     top_candidates = all_scored[:5]
 
     # Save scored candidates visualization
-    if debug_dir and top_candidates:
-        scored_overlay = draw_candidates_with_scores(image, top_candidates, "Top 5 Candidates")
-        save_debug_image(scored_overlay, "20_scored_candidates.png", debug_dir)
+    if observer and top_candidates:
+        observer.draw_and_save("20_scored_candidates", image,
+                             draw_candidates_with_scores, top_candidates, "Top 5 Candidates")
 
     if best_result is None or best_score < 0.3:
-        if debug_dir:
+        if observer:
             print(f"  Best score {best_score:.2f} below threshold 0.3")
         return None
 
     # Save final detection
-    if debug_dir:
+    if observer:
         final_overlay = image.copy()
         corners = best_result["corners"].astype(np.int32)
         cv2.polylines(final_overlay, [corners], True, Color.GREEN, Size.CONTOUR_THICK)
@@ -661,7 +523,7 @@ def detect_credit_card(
             )
             text_y += Layout.LINE_SPACING
 
-        save_debug_image(final_overlay, "21_final_detection.png", debug_dir)
+        observer.save_stage("21_final_detection", final_overlay)
         print(f"  Saved 21 debug images")
 
     return {

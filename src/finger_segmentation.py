@@ -18,6 +18,18 @@ import urllib.request
 import os
 from pathlib import Path
 
+# Import debug observer and drawing functions
+from src.debug_observer import (
+    DebugObserver,
+    save_debug_image,
+    draw_landmarks_overlay,
+    draw_hand_skeleton,
+    draw_detection_info,
+    draw_extension_scores,
+    draw_component_stats,
+    FINGER_COLORS,
+)
+
 # Import visualization constants
 from src.viz_constants import (
     FONT_FACE, FontScale, FontThickness, Color, Size, Layout
@@ -49,265 +61,6 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/han
 
 # Initialize MediaPipe Hands (lazy loading)
 _hands_detector = None
-
-# Hand skeleton connections (MediaPipe hand model)
-HAND_CONNECTIONS = [
-    # Palm
-    (0, 1), (0, 5), (0, 17), (5, 9), (9, 13), (13, 17),
-    # Thumb
-    (1, 2), (2, 3), (3, 4),
-    # Index
-    (5, 6), (6, 7), (7, 8),
-    # Middle
-    (9, 10), (10, 11), (11, 12),
-    # Ring
-    (13, 14), (14, 15), (15, 16),
-    # Pinky
-    (17, 18), (18, 19), (19, 20),
-]
-
-# Finger colors for visualization
-FINGER_COLORS = {
-    "thumb": Color.RED,
-    "index": Color.CYAN,
-    "middle": Color.YELLOW,
-    "ring": Color.MAGENTA,
-    "pinky": Color.ORANGE,
-}
-
-
-def save_debug_image(image: np.ndarray, filename: str, debug_dir: Optional[str]) -> None:
-    """
-    Save debug image with compression and downsampling.
-
-    Args:
-        image: Image to save
-        filename: Output filename
-        debug_dir: Directory to save to (if None, skip saving)
-    """
-    if debug_dir is None:
-        return
-
-    Path(debug_dir).mkdir(parents=True, exist_ok=True)
-    output_path = Path(debug_dir) / filename
-
-    # Downsample if too large (max 1920px dimension)
-    h, w = image.shape[:2]
-    max_dim = 1920
-    if max(h, w) > max_dim:
-        scale = max_dim / max(h, w)
-        new_w = int(w * scale)
-        new_h = int(h * scale)
-        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    # PNG compression
-    cv2.imwrite(str(output_path), image, [cv2.IMWRITE_PNG_COMPRESSION, 6])
-
-
-def draw_landmarks_overlay(image: np.ndarray, landmarks: np.ndarray, label: bool = True) -> np.ndarray:
-    """
-    Draw hand landmarks as numbered circles.
-
-    Args:
-        image: Input image
-        landmarks: 21x2 array of landmark positions
-        label: Whether to draw landmark numbers
-
-    Returns:
-        Image with landmarks drawn
-    """
-    overlay = image.copy()
-
-    for i, (x, y) in enumerate(landmarks):
-        # Draw circle
-        cv2.circle(overlay, (int(x), int(y)), Size.ENDPOINT_RADIUS, Color.GREEN, -1)
-        cv2.circle(overlay, (int(x), int(y)), Size.ENDPOINT_RADIUS, Color.BLACK, 2)
-
-        # Draw number
-        if label:
-            text = str(i)
-            text_size = cv2.getTextSize(text, FONT_FACE, FontScale.SMALL, FontThickness.BODY)[0]
-            text_x = int(x - text_size[0] / 2)
-            text_y = int(y + text_size[1] / 2)
-
-            # Black outline
-            cv2.putText(overlay, text, (text_x, text_y), FONT_FACE, FontScale.SMALL,
-                       Color.BLACK, FontThickness.BODY + 2, cv2.LINE_AA)
-            # White text
-            cv2.putText(overlay, text, (text_x, text_y), FONT_FACE, FontScale.SMALL,
-                       Color.WHITE, FontThickness.BODY, cv2.LINE_AA)
-
-    return overlay
-
-
-def draw_hand_skeleton(image: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
-    """
-    Draw hand skeleton with connections between landmarks.
-
-    Args:
-        image: Input image
-        landmarks: 21x2 array of landmark positions
-
-    Returns:
-        Image with skeleton drawn
-    """
-    overlay = image.copy()
-
-    # Draw connections
-    for idx1, idx2 in HAND_CONNECTIONS:
-        pt1 = (int(landmarks[idx1, 0]), int(landmarks[idx1, 1]))
-        pt2 = (int(landmarks[idx2, 0]), int(landmarks[idx2, 1]))
-        cv2.line(overlay, pt1, pt2, Color.CYAN, Size.LINE_THICK, cv2.LINE_AA)
-
-    # Draw landmarks on top
-    for i, (x, y) in enumerate(landmarks):
-        cv2.circle(overlay, (int(x), int(y)), Size.CORNER_RADIUS, Color.GREEN, -1)
-        cv2.circle(overlay, (int(x), int(y)), Size.CORNER_RADIUS, Color.BLACK, 2)
-
-    return overlay
-
-
-def draw_detection_info(image: np.ndarray, confidence: float, handedness: str, rotation: int) -> np.ndarray:
-    """
-    Draw detection metadata on image.
-
-    Args:
-        image: Input image
-        confidence: Detection confidence (0-1)
-        handedness: "Left" or "Right"
-        rotation: Rotation code (0, 1, 2, 3)
-
-    Returns:
-        Image with text overlay
-    """
-    overlay = image.copy()
-
-    rotation_names = {0: "None", 1: "90° CW", 2: "180°", 3: "90° CCW"}
-    rotation_name = rotation_names.get(rotation, "Unknown")
-
-    lines = [
-        f"Confidence: {confidence:.3f}",
-        f"Hand: {handedness}",
-        f"Rotation: {rotation_name}",
-    ]
-
-    y = Layout.TITLE_Y
-    for line in lines:
-        # Black outline
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-        # White text
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.WHITE, FontThickness.LABEL, cv2.LINE_AA)
-        y += Layout.LINE_SPACING
-
-    return overlay
-
-
-def draw_finger_regions(image: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
-    """
-    Draw individual finger regions in different colors.
-
-    Args:
-        image: Input image
-        landmarks: 21x2 array of landmark positions
-
-    Returns:
-        Image with colored finger regions
-    """
-    h, w = image.shape[:2]
-    overlay = image.copy()
-    mask_overlay = np.zeros((h, w, 3), dtype=np.uint8)
-
-    # Draw thumb
-    thumb_pts = landmarks[THUMB_LANDMARKS].astype(np.int32)
-    cv2.fillConvexPoly(mask_overlay, thumb_pts, FINGER_COLORS["thumb"])
-
-    # Draw each finger
-    for finger_name, indices in FINGER_LANDMARKS.items():
-        finger_pts = landmarks[indices].astype(np.int32)
-        cv2.fillConvexPoly(mask_overlay, finger_pts, FINGER_COLORS[finger_name])
-
-    # Blend with original
-    overlay = cv2.addWeighted(overlay, 0.6, mask_overlay, 0.4, 0)
-
-    return overlay
-
-
-def draw_extension_scores(image: np.ndarray, scores: Dict[str, float], selected: str) -> np.ndarray:
-    """
-    Draw finger extension scores.
-
-    Args:
-        image: Input image
-        scores: Dict mapping finger name to extension score
-        selected: Name of selected finger
-
-    Returns:
-        Image with scores drawn
-    """
-    overlay = image.copy()
-
-    # Sort by score
-    sorted_fingers = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-    y = Layout.TITLE_Y
-    for finger_name, score in sorted_fingers:
-        is_selected = (finger_name == selected)
-        color = Color.GREEN if is_selected else Color.WHITE
-        text = f"{finger_name.capitalize()}: {score:.1f}" + (" ✓" if is_selected else "")
-
-        # Black outline
-        cv2.putText(overlay, text, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-        # Colored text
-        cv2.putText(overlay, text, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   color, FontThickness.LABEL, cv2.LINE_AA)
-        y += Layout.LINE_SPACING
-
-    return overlay
-
-
-def draw_component_stats(image: np.ndarray, labels: np.ndarray, stats: np.ndarray,
-                         selected_idx: int) -> np.ndarray:
-    """
-    Draw connected component statistics.
-
-    Args:
-        image: Input image
-        labels: Connected component labels
-        stats: Component statistics from cv2.connectedComponentsWithStats
-        selected_idx: Index of selected component
-
-    Returns:
-        Image with colored components and stats
-    """
-    overlay = image.copy()
-
-    # Create colored component visualization
-    num_labels = stats.shape[0]
-    colors = np.random.randint(0, 255, size=(num_labels, 3), dtype=np.uint8)
-    colors[0] = [0, 0, 0]  # Background is black
-    colors[selected_idx] = Color.GREEN  # Selected is green
-
-    colored = colors[labels]
-    overlay = cv2.addWeighted(overlay, 0.5, colored, 0.5, 0)
-
-    # Draw text stats
-    y = Layout.TITLE_Y
-    lines = [
-        f"Components: {num_labels - 1}",  # Exclude background
-        f"Selected area: {stats[selected_idx, cv2.CC_STAT_AREA]} px",
-    ]
-
-    for line in lines:
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-        cv2.putText(overlay, line, (Layout.TEXT_OFFSET_X, y), FONT_FACE, FontScale.BODY,
-                   Color.WHITE, FontThickness.LABEL, cv2.LINE_AA)
-        y += Layout.LINE_SPACING
-
-    return overlay
 
 
 def _download_model():
@@ -431,10 +184,14 @@ def segment_hand(
         - handedness: "Left" or "Right"
         Or None if no hand detected
     """
+    # Create debug observer if debug mode enabled
+    observer = DebugObserver(debug_dir) if debug_dir else None
+    
     h, w = image.shape[:2]
 
     # Debug: Save original image
-    save_debug_image(image, "01_original.png", debug_dir)
+    if observer:
+        observer.save_stage("01_original", image)
 
     # Resize if image is too large (MediaPipe works better with smaller images)
     scale = 1.0
@@ -448,8 +205,8 @@ def segment_hand(
         new_h, new_w = h, w
 
     # Debug: Save resized image (if resized)
-    if scale != 1.0:
-        save_debug_image(resized, "02_resized_for_detection.png", debug_dir)
+    if scale != 1.0 and observer:
+        observer.save_stage("02_resized_for_detection", resized)
 
     # Process with MediaPipe (try multiple rotations)
     detector = _get_hands_detector()
@@ -487,21 +244,17 @@ def segment_hand(
     landmarks_normalized[:, 1] /= h
 
     # Debug: Draw landmarks overlay
-    if debug_dir:
-        landmarks_img = draw_landmarks_overlay(image, landmarks, label=True)
-        save_debug_image(landmarks_img, "03_landmarks_overlay.png", debug_dir)
-
-        # Draw hand skeleton
-        skeleton_img = draw_hand_skeleton(image, landmarks)
-        save_debug_image(skeleton_img, "04_hand_skeleton.png", debug_dir)
-
-        # Draw detection info
-        info_img = draw_detection_info(image, handedness[0].score,
-                                       handedness[0].category_name, rotation_code)
-        save_debug_image(info_img, "05_detection_info.png", debug_dir)
+    if observer:
+        observer.draw_and_save("03_landmarks_overlay", image,
+                             draw_landmarks_overlay, landmarks, label=True)
+        observer.draw_and_save("04_hand_skeleton", image,
+                             draw_hand_skeleton, landmarks)
+        observer.draw_and_save("05_detection_info", image,
+                             draw_detection_info, handedness[0].score,
+                             handedness[0].category_name, rotation_code)
 
     # Generate hand mask at original resolution
-    mask = _create_hand_mask(landmarks, (h, w), debug_dir=debug_dir)
+    mask = _create_hand_mask(landmarks, (h, w), observer)
 
     return {
         "landmarks": landmarks,
@@ -514,14 +267,14 @@ def segment_hand(
 
 
 def _create_hand_mask(landmarks: np.ndarray, shape: Tuple[int, int],
-                      debug_dir: Optional[str] = None) -> np.ndarray:
+                      observer: Optional[DebugObserver] = None) -> np.ndarray:
     """
     Create a binary mask of the hand region from landmarks.
 
     Args:
         landmarks: 21x2 array of landmark pixel coordinates
         shape: (height, width) of output mask
-        debug_dir: Optional directory to save debug images
+        observer: Optional debug observer for saving debug images
 
     Returns:
         Binary mask (uint8, 0 or 255)
@@ -529,21 +282,16 @@ def _create_hand_mask(landmarks: np.ndarray, shape: Tuple[int, int],
     h, w = shape
     mask = np.zeros((h, w), dtype=np.uint8)
 
-    # Debug: Create reference image for overlays
-    if debug_dir:
-        # Create a color image from mask for visualization
-        ref_img = np.zeros((h, w, 3), dtype=np.uint8)
-
     # Create convex hull of all landmarks
     hull_points = cv2.convexHull(landmarks.astype(np.int32))
     cv2.fillConvexPoly(mask, hull_points, 255)
 
     # Debug: Save convex hull mask
-    if debug_dir:
+    if observer:
         hull_img = cv2.cvtColor(mask.copy(), cv2.COLOR_GRAY2BGR)
         # Draw hull outline
         cv2.polylines(hull_img, [hull_points], True, Color.GREEN, Size.CONTOUR_THICK)
-        save_debug_image(hull_img, "07_convex_hull.png", debug_dir)
+        observer.save_stage("07_convex_hull", hull_img)
 
     # Also fill individual finger regions for better coverage
     finger_mask = mask.copy()
@@ -557,17 +305,17 @@ def _create_hand_mask(landmarks: np.ndarray, shape: Tuple[int, int],
     cv2.fillConvexPoly(finger_mask, thumb_pts, 255)
 
     # Debug: Save finger regions visualization
-    if debug_dir:
+    if observer:
         # Create colored finger regions using existing helper
         finger_color_img = np.zeros((h, w, 3), dtype=np.uint8)
         for finger_name, indices in FINGER_LANDMARKS.items():
             finger_pts = landmarks[indices].astype(np.int32)
             cv2.fillConvexPoly(finger_color_img, finger_pts, FINGER_COLORS[finger_name])
         cv2.fillConvexPoly(finger_color_img, thumb_pts, FINGER_COLORS["thumb"])
-        save_debug_image(finger_color_img, "08_finger_regions.png", debug_dir)
+        observer.save_stage("08_finger_regions", finger_color_img)
 
         # Save raw combined mask
-        save_debug_image(finger_mask, "09_raw_hand_mask.png", debug_dir)
+        observer.save_stage("09_raw_hand_mask", finger_mask)
 
     mask = finger_mask
 
@@ -576,20 +324,20 @@ def _create_hand_mask(landmarks: np.ndarray, shape: Tuple[int, int],
 
     # Morphological closing (fill gaps)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    if debug_dir:
-        save_debug_image(mask, "10_morph_close.png", debug_dir)
+    if observer:
+        observer.save_stage("10_morph_close", mask)
 
     # Morphological opening (remove noise)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    if debug_dir:
-        save_debug_image(mask, "11_morph_open.png", debug_dir)
+    if observer:
+        observer.save_stage("11_morph_open", mask)
 
         # Save final mask with semi-transparent overlay
         mask_colored = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
         # Create green tint for final mask
         mask_overlay = np.zeros((h, w, 3), dtype=np.uint8)
         mask_overlay[mask > 0] = Color.GREEN
-        save_debug_image(mask_overlay, "12_final_hand_mask.png", debug_dir)
+        observer.save_stage("12_final_hand_mask", mask_overlay)
 
     return mask
 
@@ -733,7 +481,7 @@ def _isolate_finger_from_hand_mask(
     finger_landmarks: np.ndarray,
     all_landmarks: np.ndarray,
     min_area: int = 500,
-    debug_dir: Optional[str] = None,
+    observer: Optional[DebugObserver] = None,
 ) -> Optional[np.ndarray]:
     """
     Isolate finger using pixel-level intersection of hand mask with finger ROI.
@@ -746,7 +494,7 @@ def _isolate_finger_from_hand_mask(
         finger_landmarks: 4x2 array of finger landmarks
         all_landmarks: 21x2 array of all hand landmarks
         min_area: Minimum valid finger area
-        debug_dir: Optional directory for debug images
+        observer: Optional debug observer for debug images
 
     Returns:
         Binary finger mask, or None if isolation fails
@@ -757,16 +505,16 @@ def _isolate_finger_from_hand_mask(
     roi_mask = _create_finger_roi_mask(finger_landmarks, all_landmarks, (h, w))
 
     # Debug: Save ROI mask
-    if debug_dir:
-        save_debug_image(roi_mask, "15a_finger_roi_mask.png", debug_dir)
+    if observer:
+        observer.save_stage("15a_finger_roi_mask", roi_mask)
 
     # Intersect hand mask with finger ROI
     # This preserves real pixel-level edges from MediaPipe
     finger_mask = cv2.bitwise_and(hand_mask, roi_mask)
 
     # Debug: Save intersection (before component selection)
-    if debug_dir:
-        save_debug_image(finger_mask, "15b_roi_hand_intersection.png", debug_dir)
+    if observer:
+        observer.save_stage("15b_roi_hand_intersection", finger_mask)
 
     # Find connected components to remove fragments from other fingers
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
@@ -777,13 +525,13 @@ def _isolate_finger_from_hand_mask(
         return None
 
     # Debug: Visualize all components
-    if debug_dir:
+    if observer:
         components_vis = np.zeros((h, w, 3), dtype=np.uint8)
         colors = np.random.randint(50, 255, size=(num_labels, 3), dtype=np.uint8)
         colors[0] = [0, 0, 0]  # Background is black
         for i in range(1, num_labels):
             components_vis[labels == i] = colors[i]
-        save_debug_image(components_vis, "15c_all_components.png", debug_dir)
+        observer.save_stage("15c_all_components", components_vis)
 
     # Select component closest to finger landmarks centroid
     landmarks_centroid = np.mean(finger_landmarks, axis=0)
@@ -811,8 +559,8 @@ def _isolate_finger_from_hand_mask(
     final_mask[labels == best_component] = 255
 
     # Debug: Save selected component
-    if debug_dir:
-        save_debug_image(final_mask, "15d_selected_component.png", debug_dir)
+    if observer:
+        observer.save_stage("15d_selected_component", final_mask)
 
     return final_mask
 
@@ -843,6 +591,9 @@ def isolate_finger(
         - finger_name: Name of the isolated finger
         Or None if finger cannot be isolated
     """
+    # Create debug observer if debug mode enabled
+    observer = DebugObserver(debug_dir) if debug_dir else None
+    
     landmarks = hand_data["landmarks"]
 
     if image_shape is None:
@@ -871,9 +622,9 @@ def isolate_finger(
         finger = best_finger
 
         # Debug: Draw extension scores
-        if debug_dir and image is not None:
-            scores_img = draw_extension_scores(image, extension_scores, finger)
-            save_debug_image(scores_img, "13_finger_extension_scores.png", debug_dir)
+        if observer and image is not None:
+            observer.draw_and_save("13_finger_extension_scores", image,
+                                 draw_extension_scores, extension_scores, finger)
 
     if finger not in FINGER_LANDMARKS:
         return None
@@ -882,7 +633,7 @@ def isolate_finger(
     finger_landmarks = landmarks[indices]
 
     # Debug: Highlight selected finger landmarks
-    if debug_dir and image is not None:
+    if observer and image is not None:
         selected_img = image.copy()
         for i, (x, y) in enumerate(finger_landmarks):
             color = Color.GREEN if i == 0 else (Color.YELLOW if i == 3 else Color.CYAN)
@@ -895,7 +646,7 @@ def isolate_finger(
                        FontScale.SMALL, Color.BLACK, FontThickness.BODY + 2, cv2.LINE_AA)
             cv2.putText(selected_img, labels[i], (int(x) + 20, int(y)), FONT_FACE,
                        FontScale.SMALL, Color.WHITE, FontThickness.BODY, cv2.LINE_AA)
-        save_debug_image(selected_img, "14_selected_finger_landmarks.png", debug_dir)
+        observer.save_stage("14_selected_finger_landmarks", selected_img)
 
     # Create finger mask using pixel-level approach (preferred)
     # This preserves actual finger edges from MediaPipe hand segmentation
@@ -910,7 +661,7 @@ def isolate_finger(
             finger_landmarks,
             landmarks,
             min_area=500,
-            debug_dir=debug_dir
+            observer=observer
         )
 
         if mask_pixel is not None:
@@ -919,16 +670,16 @@ def isolate_finger(
             print(f"  Finger isolated using pixel-level segmentation")
 
             # In debug mode, also generate polygon for comparison
-            if debug_dir:
+            if observer:
                 mask_polygon = _create_finger_mask(landmarks, indices, image_shape,
-                                                   image=image, debug_dir=debug_dir)
+                                                   image=image, observer=observer)
         else:
             print(f"  Pixel-level segmentation failed, falling back to polygon")
 
     # Fallback to polygon-based approach
     if mask_pixel is None:
         mask_polygon = _create_finger_mask(landmarks, indices, image_shape,
-                                           image=image, debug_dir=debug_dir)
+                                           image=image, observer=observer)
         if mask_polygon is not None:
             mask = mask_polygon
             method_used = "polygon"
@@ -938,7 +689,7 @@ def isolate_finger(
             return None
 
     # Debug: Compare both methods if available
-    if debug_dir and image is not None:
+    if observer and image is not None:
         # Create comparison image
         if mask_pixel is not None and mask_polygon is not None:
             comparison_img = image.copy()
@@ -970,7 +721,7 @@ def isolate_finger(
                            FontScale.BODY, color, FontThickness.LABEL, cv2.LINE_AA)
                 y += Layout.LINE_SPACING
 
-            save_debug_image(comparison_img, "17a_method_comparison.png", debug_dir)
+            observer.save_stage("17a_method_comparison", comparison_img)
 
         # Overlay final mask on original
         mask_overlay = image.copy()
@@ -986,7 +737,7 @@ def isolate_finger(
         cv2.putText(mask_overlay, text, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y), FONT_FACE,
                    FontScale.BODY, Color.WHITE, FontThickness.LABEL, cv2.LINE_AA)
 
-        save_debug_image(mask_overlay, "18_finger_mask_overlay.png", debug_dir)
+        observer.save_stage("18_finger_mask_overlay", mask_overlay)
 
     return {
         "mask": mask,
@@ -1004,7 +755,7 @@ def _create_finger_mask(
     shape: Tuple[int, int],
     width_factor: float = 2.5,
     image: Optional[np.ndarray] = None,
-    debug_dir: Optional[str] = None,
+    observer: Optional[DebugObserver] = None,
 ) -> Optional[np.ndarray]:
     """
     Create a binary mask for a single finger.
@@ -1015,7 +766,7 @@ def _create_finger_mask(
         shape: (height, width) of output mask
         width_factor: Multiplier for estimated finger width
         image: Optional original image for debug visualization
-        debug_dir: Optional directory to save debug images
+        observer: Optional debug observer for debug images
 
     Returns:
         Binary mask of finger region
@@ -1083,7 +834,7 @@ def _create_finger_mask(
     polygon = np.array(polygon, dtype=np.int32)
 
     # Debug: Visualize finger polygon construction
-    if debug_dir and image is not None:
+    if observer and image is not None:
         polygon_img = image.copy()
         # Draw left and right edges
         for i, (left, right) in enumerate(polygon_points):
@@ -1091,7 +842,7 @@ def _create_finger_mask(
             cv2.circle(polygon_img, (int(right[0]), int(right[1])), 5, Color.RED, -1)
         # Draw polygon outline
         cv2.polylines(polygon_img, [polygon], True, Color.CYAN, Size.LINE_THICK)
-        save_debug_image(polygon_img, "15_finger_polygon.png", debug_dir)
+        observer.save_stage("15_finger_polygon", polygon_img)
 
     # Fill the polygon
     cv2.fillPoly(mask, [polygon], 255)
@@ -1119,20 +870,20 @@ def _create_finger_mask(
     ], dtype=np.int32)
 
     # Debug: Visualize palm extension
-    if debug_dir and image is not None:
+    if observer and image is not None:
         ext_img = image.copy()
         cv2.fillPoly(ext_img, [ext_polygon], Color.YELLOW)
         # Draw direction vector
         cv2.arrowedLine(ext_img, (int(mcp[0]), int(mcp[1])),
                        (int(extended_base[0]), int(extended_base[1])),
                        Color.CYAN, Size.LINE_THICK, tipLength=0.3)
-        save_debug_image(ext_img, "16_palm_extension.png", debug_dir)
+        observer.save_stage("16_palm_extension", ext_img)
 
     cv2.fillPoly(mask, [ext_polygon], 255)
 
     # Debug: Save raw finger mask
-    if debug_dir:
-        save_debug_image(mask, "17_raw_finger_mask.png", debug_dir)
+    if observer:
+        observer.save_stage("17_raw_finger_mask", mask)
 
     return mask
 
@@ -1153,6 +904,9 @@ def clean_mask(
     Returns:
         Cleaned binary mask, or None if no valid component found
     """
+    # Create debug observer if debug mode enabled
+    observer = DebugObserver(debug_dir) if debug_dir else None
+    
     if mask is None or mask.size == 0:
         return None
 
@@ -1176,39 +930,39 @@ def clean_mask(
         return None
 
     # Debug: Visualize connected components
-    if debug_dir:
+    if observer:
         # Create a dummy color image for visualization
         h, w = mask.shape
         comp_img = np.zeros((h, w, 3), dtype=np.uint8)
-        comp_img = draw_component_stats(comp_img, labels, stats, largest_idx)
-        save_debug_image(comp_img, "19_connected_components.png", debug_dir)
+        observer.draw_and_save("19_connected_components", comp_img,
+                             draw_component_stats, labels, stats, largest_idx)
 
     # Create mask with only the largest component
     cleaned = np.zeros_like(mask)
     cleaned[labels == largest_idx] = 255
 
     # Debug: Save largest component
-    if debug_dir:
-        save_debug_image(cleaned, "20_largest_component.png", debug_dir)
+    if observer:
+        observer.save_stage("20_largest_component", cleaned)
 
     # Apply morphological smoothing
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
 
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
-    if debug_dir:
-        save_debug_image(cleaned, "21_morph_close.png", debug_dir)
+    if observer:
+        observer.save_stage("21_morph_close", cleaned)
 
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel)
-    if debug_dir:
-        save_debug_image(cleaned, "22_morph_open.png", debug_dir)
+    if observer:
+        observer.save_stage("22_morph_open", cleaned)
 
     # Smooth edges with Gaussian blur and re-threshold
     cleaned = cv2.GaussianBlur(cleaned, (5, 5), 0)
     _, cleaned = cv2.threshold(cleaned, 127, 255, cv2.THRESH_BINARY)
 
-    if debug_dir:
-        save_debug_image(cleaned, "23_gaussian_blur.png", debug_dir)
-        save_debug_image(cleaned, "24_final_cleaned_mask.png", debug_dir)
+    if observer:
+        observer.save_stage("23_gaussian_blur", cleaned)
+        observer.save_stage("24_final_cleaned_mask", cleaned)
 
     return cleaned
 
