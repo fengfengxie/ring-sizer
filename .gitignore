@@ -15,18 +15,18 @@ ENV/
 *.swo
 
 # Project outputs (keep structure, ignore contents)
-outputs/*.json
-outputs/*.png
-outputs/*.jpg
-outputs/intermediate/
-outputs/card_detection_debug/
+output/*.json
+output/*.png
+output/*.jpg
+output/intermediate/
+output/card_detection_debug/
 
 # Downloaded models (auto-downloaded on first run)
-models/*.task
+model/*.task
 
 # Test artifacts
-samples/test*.jpg
-samples/*.heic
+input/test*.jpg
+input/*.heic
 
 # OS
 .DS_Store
