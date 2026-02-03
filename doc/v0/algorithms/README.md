@@ -103,17 +103,26 @@ Multi-strategy detection approach using 4 parallel algorithms:
 
 ---
 
-### Phase 4: Hand & Finger Segmentation
-**Status:** 🔜 To be documented
+### Phase 4: Hand & Finger Segmentation ✅
+**Status:** ✅ **Documented**
 **Module:** `src/finger_segmentation.py`
 
-- MediaPipe hand landmark detection
-- 21-point hand model
-- Finger isolation (index/middle/ring/pinky)
-- Binary mask generation and cleanup
-- Contour extraction
+Dual-method approach for finger isolation:
+1. **Pixel-Level Segmentation** (primary) - Preserves actual MediaPipe edges
+2. **Polygon-Based Segmentation** (fallback) - Synthetic geometric approximation
 
-**Document:** `04-finger-segmentation.md` (coming soon)
+**Key features:**
+- MediaPipe 21-point hand landmark detection
+- Multi-rotation detection (0°, 90°, 180°, 270°)
+- Pixel-accurate hand mask generation
+- Automatic finger selection by extension score
+- ROI-based finger isolation with component analysis
+- Morphological mask cleaning (7x7 kernel)
+- Contour extraction with smoothing
+
+**Accuracy improvement:** +25% width measurement (pixel-level vs polygon)
+
+**Document:** **[04-finger-segmentation.md](04-finger-segmentation.md)** ✅
 
 ---
 
@@ -194,9 +203,9 @@ Multi-factor confidence assessment:
 | Phase | Algorithm | Input | Output | Complexity |
 |-------|-----------|-------|--------|------------|
 | 1 | Image Quality | RGB Image | Quality Flags | O(n) |
-| 2 | **Card Detection** | RGB Image | Corners, Confidence | O(n²) |
+| 2 | **Card Detection** ✅ | RGB Image | Corners, Confidence | O(n²) |
 | 3 | Scale Calibration | Card Corners | px_per_cm | O(1) |
-| 4 | Finger Segment | RGB Image | Mask, Landmarks | O(n) |
+| 4 | **Finger Segment** ✅ | RGB Image | Mask, Landmarks | O(n) |
 | 5 | Axis Estimation | Finger Mask | Axis, Center | O(n) |
 | 6 | Zone Localization | Axis, Length | Zone Bounds | O(1) |
 | 7 | Width Measurement | Zone, Scale | Width (cm) | O(n) |

@@ -733,6 +733,7 @@ def _isolate_finger_from_hand_mask(
     finger_landmarks: np.ndarray,
     all_landmarks: np.ndarray,
     min_area: int = 500,
+    debug_dir: Optional[str] = None,
 ) -> Optional[np.ndarray]:
     """
     Isolate finger using pixel-level intersection of hand mask with finger ROI.
@@ -745,6 +746,7 @@ def _isolate_finger_from_hand_mask(
         finger_landmarks: 4x2 array of finger landmarks
         all_landmarks: 21x2 array of all hand landmarks
         min_area: Minimum valid finger area
+        debug_dir: Optional directory for debug images
 
     Returns:
         Binary finger mask, or None if isolation fails
@@ -754,9 +756,17 @@ def _isolate_finger_from_hand_mask(
     # Create ROI mask around finger
     roi_mask = _create_finger_roi_mask(finger_landmarks, all_landmarks, (h, w))
 
+    # Debug: Save ROI mask
+    if debug_dir:
+        save_debug_image(roi_mask, "15a_finger_roi_mask.png", debug_dir)
+
     # Intersect hand mask with finger ROI
     # This preserves real pixel-level edges from MediaPipe
     finger_mask = cv2.bitwise_and(hand_mask, roi_mask)
+
+    # Debug: Save intersection (before component selection)
+    if debug_dir:
+        save_debug_image(finger_mask, "15b_roi_hand_intersection.png", debug_dir)
 
     # Find connected components to remove fragments from other fingers
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
@@ -765,6 +775,15 @@ def _isolate_finger_from_hand_mask(
 
     if num_labels <= 1:
         return None
+
+    # Debug: Visualize all components
+    if debug_dir:
+        components_vis = np.zeros((h, w, 3), dtype=np.uint8)
+        colors = np.random.randint(50, 255, size=(num_labels, 3), dtype=np.uint8)
+        colors[0] = [0, 0, 0]  # Background is black
+        for i in range(1, num_labels):
+            components_vis[labels == i] = colors[i]
+        save_debug_image(components_vis, "15c_all_components.png", debug_dir)
 
     # Select component closest to finger landmarks centroid
     landmarks_centroid = np.mean(finger_landmarks, axis=0)
@@ -790,6 +809,10 @@ def _isolate_finger_from_hand_mask(
     # Create final mask with only the selected component
     final_mask = np.zeros_like(finger_mask)
     final_mask[labels == best_component] = 255
+
+    # Debug: Save selected component
+    if debug_dir:
+        save_debug_image(final_mask, "15d_selected_component.png", debug_dir)
 
     return final_mask
 
@@ -886,7 +909,8 @@ def isolate_finger(
             hand_data["mask"],
             finger_landmarks,
             landmarks,
-            min_area=500
+            min_area=500,
+            debug_dir=debug_dir
         )
 
         if mask_pixel is not None:
@@ -894,17 +918,8 @@ def isolate_finger(
             method_used = "pixel-level"
             print(f"  Finger isolated using pixel-level segmentation")
 
-            # Debug: Show ROI mask and intersection
+            # In debug mode, also generate polygon for comparison
             if debug_dir:
-                h, w = image_shape
-                roi_mask = _create_finger_roi_mask(finger_landmarks, landmarks, (h, w))
-                save_debug_image(roi_mask, "15a_finger_roi_mask.png", debug_dir)
-
-                # Show intersection process
-                intersection = cv2.bitwise_and(hand_data["mask"], roi_mask)
-                save_debug_image(intersection, "15b_roi_hand_intersection.png", debug_dir)
-
-                # In debug mode, also generate polygon for comparison
                 mask_polygon = _create_finger_mask(landmarks, indices, image_shape,
                                                    image=image, debug_dir=debug_dir)
         else:

@@ -455,3 +455,109 @@ The comparison image (`17a_method_comparison.png`) clearly shows:
 **Result**: Eliminated systematic underestimation error from polygon-based approach, achieving more accurate finger width measurements that reflect actual finger geometry.
 
 ---
+
+## Documentation: Finger Segmentation Algorithm ✅
+**Date:** 2026-02-03
+
+**Created:** Comprehensive technical documentation for Phase 4 (Hand & Finger Segmentation) algorithm.
+
+**Document:** `doc/v0/algorithms/04-finger-segmentation.md` (4,200+ lines)
+
+**Content:**
+
+**Complete Pipeline Documentation:**
+1. **Stage 1: Hand Detection** - MediaPipe integration, multi-rotation detection, landmark transformation
+2. **Stage 2: Hand Mask Generation** - Convex hull, finger filling, morphological smoothing
+3. **Stage 3: Finger Isolation** - Dual-method approach (pixel-level + polygon fallback)
+4. **Stage 4: Method Comparison** - Visual comparison of both approaches
+5. **Stage 5: Mask Cleaning** - Connected components, morphology, Gaussian smoothing
+6. **Stage 6: Contour Extraction** - Boundary extraction with optional smoothing
+
+**Dual-Method Documentation:**
+
+**Method A: Pixel-Level Segmentation** (Primary)
+- ROI creation with finger axis calculation
+- Intersection with MediaPipe hand mask
+- Connected component selection
+- Preserves actual finger edges (+25% accuracy)
+
+**Method B: Polygon-Based Segmentation** (Fallback)
+- Heuristic width estimation from adjacent fingers
+- 4-point polygon construction
+- Palm extension region
+- Systematic underestimation documented (~0.6cm error)
+
+**Technical Details:**
+- MediaPipe 21-landmark model specification
+- Hand skeleton connection definitions
+- Complete parameter tables (detection, mask, ROI, polygon, cleaning, contour)
+- Algorithm pseudocode for all stages
+- Complexity analysis (timing and memory)
+
+**Debug Output Documentation:**
+- 27 debug images mapped to pipeline stages
+- Each image purpose and interpretation explained
+- Why 15a and 15b are identical (expected behavior)
+- New images 15c and 15d show component selection
+
+**Performance Metrics:**
+- Timing breakdown: MediaPipe (60%), isolation (20%), mask gen (16%), cleaning (4%)
+- Memory usage: ~80MB peak for 3213x5712 image
+- Measurement accuracy comparison: polygon (2.45cm) vs pixel-level (3.06cm)
+
+**Strengths & Weaknesses:**
+- Detailed analysis of both methods
+- When each method works best
+- Failure modes and solutions table
+- Confidence factors interpretation
+
+**Updated References:**
+- Updated `doc/v0/algorithms/README.md` with Phase 4 status ✅
+- Added quick reference table entry
+- Cross-referenced related algorithm documents
+
+**Benefits:**
+- ✅ **Complete technical reference** - Every stage documented with pseudocode
+- ✅ **Debug transparency** - All 27 debug images explained
+- ✅ **Method comparison** - Clear explanation of accuracy improvement
+- ✅ **Parameter documentation** - All tunable values with rationale
+- ✅ **Troubleshooting guide** - Failure modes and solutions
+
+**Result**: Comprehensive algorithm documentation enabling understanding, debugging, and future improvements of finger segmentation pipeline.
+
+---
+
+## Bugfix: Improved Pixel-Level Debug Output ✅
+**Date:** 2026-02-03
+
+**Issue**: Debug images 15a (ROI mask) and 15b (ROI ∩ hand mask) were byte-identical, causing confusion about why they appeared the same.
+
+**Root Cause**:
+- Hand mask from MediaPipe is a large convex hull covering entire hand
+- Finger ROI is smaller and falls completely within hand mask
+- Therefore: `hand_mask AND roi_mask = roi_mask` (intersection equals ROI everywhere)
+- This is **expected behavior**, but wasn't clearly visualized
+
+**Solution**: Enhanced debug output to show complete component selection process:
+
+**New Debug Images:**
+- `15a_finger_roi_mask.png` - ROI boundary around finger (unchanged)
+- `15b_roi_hand_intersection.png` - Intersection before component selection (unchanged, expected identical to 15a)
+- `15c_all_components.png` - **NEW** - All connected components colored
+- `15d_selected_component.png` - **NEW** - Final selected finger component
+
+**Implementation:**
+- Modified `_isolate_finger_from_hand_mask()` to accept `debug_dir` parameter
+- Added debug saves for component visualization
+- Moved duplicate debug saves from `isolate_finger()` into helper function
+- Clear documentation that 15a/15b identity is expected
+
+**Result**:
+- Debug output now shows **4 stages** instead of 2
+- Component selection process visible (15c shows separation quality)
+- Users understand why 15a/15b are identical (ROI ⊂ hand mask)
+- Complete transparency into pixel-level isolation algorithm
+
+**Testing**: Confirmed with `test_sample2.jpg` - only 1 component found (perfect isolation).
+
+---
