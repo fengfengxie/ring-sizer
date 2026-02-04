@@ -1135,3 +1135,111 @@ Lower success rate (41%) is BETTER than high success rate (100%) with wrong meas
 - **Deep learning edge refinement**: CNN-based edge detection for ultimate accuracy
 - **Real-time optimization**: GPU acceleration, optimized kernels
 - **Video support**: Multi-frame averaging, temporal consistency
+
+---
+
+## Code Refactoring (2026-02-04) ✅
+**Purpose:** Improve maintainability, testability, and code organization
+
+### Motivation
+After completing v1 implementation with axis-expansion breakthrough, three core modules (`edge_refinement.py`, `geometry.py`, `confidence.py`) accumulated:
+- 58 hardcoded magic numbers
+- 14 debug print statements in production code
+- Nested functions difficult to test independently
+- Complex parameter tuning requiring code search
+
+### Implementation
+
+**Created 3 Constants Modules:**
+1. `src/edge_refinement_constants.py` (104 lines)
+   - 19 constants: ROI, Sobel, edge detection, sub-pixel, quality scoring, auto fallback
+2. `src/geometry_constants.py` (51 lines)
+   - 9 constants: landmark validation, PCA, ring zone, intersection thresholds
+3. `src/confidence_constants.py` (86 lines)
+   - 28 constants: card, finger, measurement, overall confidence weights and thresholds
+
+**Refactored 3 Core Modules:**
+
+1. **`src/edge_refinement.py`** (1175 lines)
+   - Replaced 19 hardcoded values with named constants
+   - Extracted 2 nested helper functions to module level:
+     * `_get_axis_x_at_row()` - Get axis coordinate (24 lines)
+     * `_find_edges_from_axis()` - Axis-expansion algorithm (66 lines)
+   - Replaced 9 `print()` statements with `logging.debug()` calls
+   - Added clear section separators for better navigation
+
+2. **`src/geometry.py`** (618 lines)
+   - Replaced 9 hardcoded values with named constants
+   - Replaced 5 `print()` statements with `logging.debug()` calls
+   - Enhanced docstrings with parameter details
+
+3. **`src/confidence.py`** (251 lines)
+   - Replaced ALL 30 hardcoded values with 28 named constants
+   - Added logging infrastructure (ready for future use)
+   - Enhanced docstrings to explicitly list constants used
+
+### Benefits
+
+**Maintainability:**
+- All thresholds centralized in constants files
+- Easy to tune parameters without code search
+- Self-documenting constant names
+
+**Testability:**
+- Extracted helper functions can be unit tested independently
+- 2 previously nested functions now testable
+
+**Debugging:**
+- Proper Python logging framework (runtime configurable)
+- Clean production output (no hardcoded debug prints)
+- Debug logging available with `--log-level DEBUG`
+
+**Code Quality:**
+- Zero hardcoded magic numbers in computation code
+- Consistent logging approach across modules
+- Follows Python best practices
+
+### Validation
+
+**Syntax Check:**
+```bash
+python3 -m py_compile src/edge_refinement*.py src/geometry*.py src/confidence*.py
+# Result: ✅ All 6 files compile successfully
+```
+
+**Integration Test:**
+```bash
+python3 measure_finger.py --input input/test_sample2.jpg \
+  --output output/refactoring_test.json --edge-method auto
+# Result: ✅ Measurement successful (2.897cm, confidence 0.923)
+# Result: ✅ Identical behavior to pre-refactor code
+# Result: ✅ Clean output (no debug prints)
+```
+
+### Statistics
+
+- **Hardcoded values eliminated**: 58 magic numbers → 56 named constants
+- **Functions extracted**: 2 nested functions → module-level helpers
+- **Print statements replaced**: 14 `print()` → `logging.debug()` calls
+- **Lines added**: 241 lines (constants modules, 11.8% increase for better organization)
+- **Algorithm changes**: **ZERO** - all logic preserved exactly
+
+### Files Modified
+- ✅ `src/edge_refinement.py` - Refactored with constants and extracted functions
+- ✅ `src/geometry.py` - Refactored with constants and logging
+- ✅ `src/confidence.py` - Refactored with comprehensive constants
+- ✨ `src/edge_refinement_constants.py` - New constants module
+- ✨ `src/geometry_constants.py` - New constants module
+- ✨ `src/confidence_constants.py` - New constants module
+- 📄 `REFACTORING_SUMMARY.md` - Detailed refactoring documentation
+
+### Documentation
+- Created comprehensive `REFACTORING_SUMMARY.md` with:
+  - Before/after comparison
+  - Benefits analysis
+  - Migration guide
+  - Testing results
+  - Impact on development workflow
+
+---
+

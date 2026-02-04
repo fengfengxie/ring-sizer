@@ -7,10 +7,54 @@ This module handles:
 - Measurement stability confidence
 - Edge quality confidence (v1)
 - Aggregate confidence calculation
+
+All thresholds and weights are imported from confidence_constants.py.
 """
 
+import logging
 import numpy as np
 from typing import Dict, Any, Optional, Literal
+
+from .confidence_constants import (
+    # Card confidence constants
+    CARD_IDEAL_ASPECT_RATIO,
+    CARD_MAX_ASPECT_DEVIATION,
+    CARD_WEIGHT_DETECTION,
+    CARD_WEIGHT_ASPECT,
+    CARD_WEIGHT_SCALE,
+    # Finger confidence constants
+    FINGER_IDEAL_MIN_AREA_FRACTION,
+    FINGER_IDEAL_MAX_AREA_FRACTION,
+    FINGER_WEIGHT_HAND_DETECTION,
+    FINGER_WEIGHT_MASK_VALIDITY,
+    # Measurement confidence constants
+    MEASUREMENT_CV_POOR,
+    MEASUREMENT_CONSISTENCY_THRESHOLD,
+    MEASUREMENT_OUTLIER_STD_MULTIPLIER,
+    MEASUREMENT_WIDTH_TYPICAL_MIN,
+    MEASUREMENT_WIDTH_TYPICAL_MAX,
+    MEASUREMENT_WIDTH_ABSOLUTE_MIN,
+    MEASUREMENT_WIDTH_ABSOLUTE_MAX,
+    MEASUREMENT_WEIGHT_VARIANCE,
+    MEASUREMENT_WEIGHT_CONSISTENCY,
+    MEASUREMENT_WEIGHT_OUTLIERS,
+    MEASUREMENT_WEIGHT_RANGE,
+    MEASUREMENT_RANGE_SCORE_IDEAL,
+    MEASUREMENT_RANGE_SCORE_BORDERLINE,
+    MEASUREMENT_RANGE_SCORE_OUTSIDE,
+    # Overall confidence constants
+    V0_WEIGHT_CARD,
+    V0_WEIGHT_FINGER,
+    V0_WEIGHT_MEASUREMENT,
+    V1_WEIGHT_CARD,
+    V1_WEIGHT_FINGER,
+    V1_WEIGHT_EDGE_QUALITY,
+    V1_WEIGHT_MEASUREMENT,
+    CONFIDENCE_LEVEL_HIGH_THRESHOLD,
+    CONFIDENCE_LEVEL_MEDIUM_THRESHOLD,
+)
+
+logger = logging.getLogger(__name__)
 
 EdgeMethod = Literal["contour", "sobel", "sobel_fallback"]
 
@@ -21,6 +65,11 @@ def compute_card_confidence(
 ) -> float:
     """
     Compute confidence score from card detection.
+
+    Uses constants:
+    - CARD_IDEAL_ASPECT_RATIO: ISO/IEC 7810 ID-1 aspect ratio
+    - CARD_MAX_ASPECT_DEVIATION: Maximum acceptable deviation (0.15)
+    - CARD_WEIGHT_*: Component weights (detection: 50%, aspect: 25%, scale: 25%)
 
     Args:
         card_result: Output from detect_credit_card()
@@ -34,18 +83,16 @@ def compute_card_confidence(
 
     # Aspect ratio deviation penalty
     aspect_ratio = card_result.get("aspect_ratio", 0.0)
-    ideal_ratio = 85.60 / 53.98  # 1.586
-    aspect_deviation = abs(aspect_ratio - ideal_ratio) / ideal_ratio
+    aspect_deviation = abs(aspect_ratio - CARD_IDEAL_ASPECT_RATIO) / CARD_IDEAL_ASPECT_RATIO
 
-    # Penalize deviation beyond 5%
-    aspect_score = max(0, 1.0 - (aspect_deviation / 0.15))
+    # Penalize deviation beyond threshold
+    aspect_score = max(0, 1.0 - (aspect_deviation / CARD_MAX_ASPECT_DEVIATION))
 
-    # Combine components
-    # Detection quality: 50%, Aspect ratio: 25%, Scale calibration: 25%
+    # Combine components with weights
     card_conf = (
-        0.5 * detection_conf +
-        0.25 * aspect_score +
-        0.25 * scale_confidence
+        CARD_WEIGHT_DETECTION * detection_conf +
+        CARD_WEIGHT_ASPECT * aspect_score +
+        CARD_WEIGHT_SCALE * scale_confidence
     )
 
     return float(np.clip(card_conf, 0, 1))
@@ -59,6 +106,11 @@ def compute_finger_confidence(
 ) -> float:
     """
     Compute confidence score from finger detection.
+
+    Uses constants:
+    - FINGER_IDEAL_MIN_AREA_FRACTION: Minimum ideal mask area (0.5% of image)
+    - FINGER_IDEAL_MAX_AREA_FRACTION: Maximum ideal mask area (5% of image)
+    - FINGER_WEIGHT_*: Component weights (hand: 70%, mask: 30%)
 
     Args:
         hand_data: Output from segment_hand()
@@ -74,17 +126,16 @@ def compute_finger_confidence(
 
     # Mask area validity (should be reasonable fraction of image)
     mask_fraction = mask_area / image_area
-    # Ideal range: 0.5% to 5% of image
-    if mask_fraction < 0.005:
-        area_score = mask_fraction / 0.005
-    elif mask_fraction > 0.05:
-        area_score = max(0, 1.0 - (mask_fraction - 0.05) / 0.05)
+    # Ideal range: FINGER_IDEAL_MIN_AREA_FRACTION to FINGER_IDEAL_MAX_AREA_FRACTION
+    if mask_fraction < FINGER_IDEAL_MIN_AREA_FRACTION:
+        area_score = mask_fraction / FINGER_IDEAL_MIN_AREA_FRACTION
+    elif mask_fraction > FINGER_IDEAL_MAX_AREA_FRACTION:
+        area_score = max(0, 1.0 - (mask_fraction - FINGER_IDEAL_MAX_AREA_FRACTION) / FINGER_IDEAL_MAX_AREA_FRACTION)
     else:
         area_score = 1.0
 
-    # Combine components
-    # Hand detection: 70%, Mask validity: 30%
-    finger_conf = 0.7 * hand_conf + 0.3 * area_score
+    # Combine components with weights
+    finger_conf = FINGER_WEIGHT_HAND_DETECTION * hand_conf + FINGER_WEIGHT_MASK_VALIDITY * area_score
 
     return float(np.clip(finger_conf, 0, 1))
 
@@ -95,6 +146,14 @@ def compute_measurement_confidence(
 ) -> float:
     """
     Compute confidence score from measurement stability.
+
+    Uses constants:
+    - MEASUREMENT_CV_POOR: Coefficient of variation threshold (0.15)
+    - MEASUREMENT_CONSISTENCY_THRESHOLD: Median-mean difference threshold (0.1)
+    - MEASUREMENT_OUTLIER_STD_MULTIPLIER: Outlier detection threshold (2.0)
+    - MEASUREMENT_WIDTH_*: Realistic width ranges (1.0-3.0 cm)
+    - MEASUREMENT_WEIGHT_*: Component weights (variance: 40%, consistency: 20%, outliers: 20%, range: 20%)
+    - MEASUREMENT_RANGE_SCORE_*: Range score values
 
     Args:
         width_data: Output from compute_cross_section_width()
@@ -114,36 +173,35 @@ def compute_measurement_confidence(
 
     # 1. Variance score (lower variance = higher confidence)
     coefficient_of_variation = std_px / (median_px + 1e-8)
-    # CV < 0.05 is excellent, CV > 0.2 is poor
-    variance_score = max(0, 1.0 - coefficient_of_variation / 0.15)
+    # CV < MEASUREMENT_CV_POOR is acceptable
+    variance_score = max(0, 1.0 - coefficient_of_variation / MEASUREMENT_CV_POOR)
 
     # 2. Median-Mean consistency
     median_mean_diff = abs(median_px - mean_px) / (median_px + 1e-8)
-    consistency_score = max(0, 1.0 - median_mean_diff / 0.1)
+    consistency_score = max(0, 1.0 - median_mean_diff / MEASUREMENT_CONSISTENCY_THRESHOLD)
 
     # 3. Outlier ratio (measurements far from median)
-    outlier_threshold = 2.0 * std_px
+    outlier_threshold = MEASUREMENT_OUTLIER_STD_MULTIPLIER * std_px
     outliers = np.sum(np.abs(widths_px - median_px) > outlier_threshold)
     outlier_ratio = outliers / len(widths_px)
     outlier_score = max(0, 1.0 - outlier_ratio)
 
     # 4. Realistic range check
-    if 1.4 <= median_width_cm <= 2.4:
-        range_score = 1.0
-    elif 1.0 <= median_width_cm <= 3.0:
+    if MEASUREMENT_WIDTH_TYPICAL_MIN <= median_width_cm <= MEASUREMENT_WIDTH_TYPICAL_MAX:
+        range_score = MEASUREMENT_RANGE_SCORE_IDEAL
+    elif MEASUREMENT_WIDTH_ABSOLUTE_MIN <= median_width_cm <= MEASUREMENT_WIDTH_ABSOLUTE_MAX:
         # Borderline acceptable
-        range_score = 0.7
+        range_score = MEASUREMENT_RANGE_SCORE_BORDERLINE
     else:
         # Outside realistic range
-        range_score = 0.3
+        range_score = MEASUREMENT_RANGE_SCORE_OUTSIDE
 
-    # Combine components
-    # Variance: 40%, Consistency: 20%, Outliers: 20%, Range: 20%
+    # Combine components with weights
     measurement_conf = (
-        0.4 * variance_score +
-        0.2 * consistency_score +
-        0.2 * outlier_score +
-        0.2 * range_score
+        MEASUREMENT_WEIGHT_VARIANCE * variance_score +
+        MEASUREMENT_WEIGHT_CONSISTENCY * consistency_score +
+        MEASUREMENT_WEIGHT_OUTLIERS * outlier_score +
+        MEASUREMENT_WEIGHT_RANGE * range_score
     )
 
     return float(np.clip(measurement_conf, 0, 1))
@@ -185,8 +243,13 @@ def compute_overall_confidence(
     Compute overall confidence by combining component scores.
 
     Supports both v0 (contour) and v1 (Sobel) confidence calculation:
-    - v0 (contour): 3 components (card, finger, measurement)
-    - v1 (sobel): 4 components (card, finger, edge quality, measurement)
+    - v0 (contour): 3 components with V0_WEIGHT_* constants
+    - v1 (sobel): 4 components with V1_WEIGHT_* constants
+
+    Uses constants:
+    - V0_WEIGHT_*: v0 component weights (card: 30%, finger: 30%, measurement: 40%)
+    - V1_WEIGHT_*: v1 component weights (card: 25%, finger: 25%, edge: 20%, measurement: 30%)
+    - CONFIDENCE_LEVEL_*_THRESHOLD: Level thresholds (high: >0.85, medium: >=0.6)
 
     Args:
         card_confidence: Card detection confidence
@@ -214,32 +277,30 @@ def compute_overall_confidence(
 
     # Calculate overall confidence based on method
     if edge_method == "sobel" and edge_quality_confidence is not None:
-        # v1 scoring: 4 components
-        # Card: 25%, Finger: 25%, Edge Quality: 20%, Measurement: 30%
+        # v1 scoring: 4 components with V1_WEIGHT_* constants
         overall = (
-            0.25 * card_confidence +
-            0.25 * finger_confidence +
-            0.20 * edge_quality_confidence +
-            0.30 * measurement_confidence
+            V1_WEIGHT_CARD * card_confidence +
+            V1_WEIGHT_FINGER * finger_confidence +
+            V1_WEIGHT_EDGE_QUALITY * edge_quality_confidence +
+            V1_WEIGHT_MEASUREMENT * measurement_confidence
         )
         result["edge_quality"] = float(edge_quality_confidence)
 
     else:
-        # v0 scoring: 3 components (contour method or sobel fallback)
-        # Card: 30%, Finger: 30%, Measurement: 40%
+        # v0 scoring: 3 components with V0_WEIGHT_* constants (contour method or sobel fallback)
         overall = (
-            0.30 * card_confidence +
-            0.30 * finger_confidence +
-            0.40 * measurement_confidence
+            V0_WEIGHT_CARD * card_confidence +
+            V0_WEIGHT_FINGER * finger_confidence +
+            V0_WEIGHT_MEASUREMENT * measurement_confidence
         )
         result["edge_quality"] = None
 
     overall = float(np.clip(overall, 0, 1))
 
-    # Classify confidence level
-    if overall > 0.85:
+    # Classify confidence level using threshold constants
+    if overall > CONFIDENCE_LEVEL_HIGH_THRESHOLD:
         level = "high"
-    elif overall >= 0.6:
+    elif overall >= CONFIDENCE_LEVEL_MEDIUM_THRESHOLD:
         level = "medium"
     else:
         level = "low"

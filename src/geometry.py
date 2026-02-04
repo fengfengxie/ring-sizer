@@ -8,8 +8,23 @@ This module handles:
 - Coordinate transformations
 """
 
+import logging
 import numpy as np
 from typing import Tuple, List, Optional, Dict, Any, Literal
+
+from .geometry_constants import (
+    MIN_LANDMARK_SPACING_PX,
+    MIN_FINGER_LENGTH_PX,
+    EPSILON,
+    MIN_MASK_POINTS_FOR_PCA,
+    ENDPOINT_SAMPLE_DISTANCE_FACTOR,
+    DEFAULT_ZONE_START_PCT,
+    DEFAULT_ZONE_END_PCT,
+    ANATOMICAL_ZONE_WIDTH_FACTOR,
+    MIN_DETERMINANT_FOR_INTERSECTION,
+)
+
+logger = logging.getLogger(__name__)
 
 # Type for axis estimation method
 AxisMethod = Literal["auto", "landmarks", "pca"]
@@ -41,7 +56,7 @@ def _validate_landmark_quality(landmarks: np.ndarray) -> Tuple[bool, str]:
 
     # Check if any distance is too small (collapsed landmarks)
     min_distance = min(distances)
-    if min_distance < 5.0:  # Less than 5 pixels suggests collapsed/invalid landmarks
+    if min_distance < MIN_LANDMARK_SPACING_PX:
         return False, "landmarks_too_close"
 
     # Check for monotonically increasing progression (no crossovers)
@@ -49,7 +64,7 @@ def _validate_landmark_quality(landmarks: np.ndarray) -> Tuple[bool, str]:
     overall_direction = landmarks[3] - landmarks[0]
     overall_length = np.linalg.norm(overall_direction)
 
-    if overall_length < 20.0:  # Entire finger less than 20px suggests invalid
+    if overall_length < MIN_FINGER_LENGTH_PX:
         return False, "finger_too_short"
 
     overall_direction = overall_direction / overall_length
@@ -178,16 +193,17 @@ def _estimate_axis_pca(
 
     Args:
         mask: Binary finger mask
-        landmarks: Optional finger landmarks for orientation
+        landmarks: Optional finger landmarks for orientation (4x2 array)
 
     Returns:
         Dictionary containing axis data with method="pca"
+        Keys: center, direction, length, palm_end, tip_end, method
     """
     # Get all non-zero points in the mask
     points = np.column_stack(np.where(mask > 0))  # Returns (row, col) i.e., (y, x)
     points = points[:, [1, 0]]  # Convert to (x, y) format
 
-    if len(points) < 10:
+    if len(points) < MIN_MASK_POINTS_FOR_PCA:
         raise ValueError("Not enough points in mask for axis estimation")
 
     # Calculate center (centroid)
@@ -242,7 +258,7 @@ def _estimate_axis_pca(
     else:
         # Without landmarks, use heuristic: tip is usually thinner
         # Sample points near each endpoint
-        sample_distance = length * 0.1
+        sample_distance = length * ENDPOINT_SAMPLE_DISTANCE_FACTOR
 
         # Points near endpoint1
         near_ep1 = points[np.abs(projections - min_proj) < sample_distance]
@@ -329,17 +345,17 @@ def estimate_finger_axis(
                 is_valid, reason = _validate_landmark_quality(landmarks)
                 if is_valid:
                     # Use landmark-based method
-                    print(f"  Using landmark-based axis estimation ({landmark_method})")
+                    logger.debug(f"Using landmark-based axis estimation ({landmark_method})")
                     return estimate_finger_axis_from_landmarks(landmarks, method=landmark_method)
                 else:
-                    print(f"  Landmarks available but quality check failed: {reason}")
-                    print(f"  Falling back to PCA axis estimation")
+                    logger.debug(f"Landmarks available but quality check failed: {reason}")
+                    logger.debug("Falling back to PCA axis estimation")
             else:
-                print(f"  Landmarks not available, using PCA axis estimation")
+                logger.debug("Landmarks not available, using PCA axis estimation")
 
         except Exception as e:
-            print(f"  Landmark-based axis estimation failed: {e}")
-            print(f"  Falling back to PCA axis estimation")
+            logger.debug(f"Landmark-based axis estimation failed: {e}")
+            logger.debug("Falling back to PCA axis estimation")
 
         # Fall back to PCA
         return _estimate_axis_pca(mask, landmarks)
@@ -350,14 +366,15 @@ def estimate_finger_axis(
 
 def localize_ring_zone(
     axis_data: Dict[str, Any],
-    zone_start_pct: float = 0.15,
-    zone_end_pct: float = 0.25,
+    zone_start_pct: float = DEFAULT_ZONE_START_PCT,
+    zone_end_pct: float = DEFAULT_ZONE_END_PCT,
 ) -> Dict[str, Any]:
     """
     Localize the ring-wearing zone along the finger axis.
 
     Args:
-        axis_data: Output from estimate_finger_axis()
+        axis_data: Output from estimate_finger_axis() containing center,
+                   direction, length, palm_end, tip_end
         zone_start_pct: Zone start as percentage from palm (default 15%)
         zone_end_pct: Zone end as percentage from palm (default 25%)
 
@@ -365,8 +382,10 @@ def localize_ring_zone(
         Dictionary containing:
         - start_point: Zone start position (x, y)
         - end_point: Zone end position (x, y)
-        - center_point: Zone center position
+        - center_point: Zone center position (x, y)
         - length: Zone length in pixels
+        - start_pct: Start percentage used
+        - end_pct: End percentage used
         - localization_method: "percentage"
     """
     # Extract axis information
@@ -405,8 +424,8 @@ def localize_ring_zone_from_landmarks(
     landmarks: np.ndarray,
     axis_data: Dict[str, Any],
     zone_type: str = "percentage",
-    zone_start_pct: float = 0.15,
-    zone_end_pct: float = 0.25,
+    zone_start_pct: float = DEFAULT_ZONE_START_PCT,
+    zone_end_pct: float = DEFAULT_ZONE_END_PCT,
 ) -> Dict[str, Any]:
     """
     Localize ring-wearing zone using anatomical landmarks.
@@ -416,7 +435,8 @@ def localize_ring_zone_from_landmarks(
 
     Args:
         landmarks: 4x2 array of finger landmarks [MCP, PIP, DIP, TIP]
-        axis_data: Output from estimate_finger_axis()
+        axis_data: Output from estimate_finger_axis() containing center,
+                   direction, length, palm_end, tip_end
         zone_type: Zone localization method
             - "percentage": 15-25% from palm (v0 compatible, default)
             - "anatomical": Centered on PIP joint with proportional width
@@ -427,7 +447,7 @@ def localize_ring_zone_from_landmarks(
         Dictionary containing:
         - start_point: Zone start position (x, y)
         - end_point: Zone end position (x, y)
-        - center_point: Zone center position
+        - center_point: Zone center position (x, y)
         - length: Zone length in pixels
         - localization_method: "percentage" or "anatomical"
     """
@@ -451,7 +471,7 @@ def localize_ring_zone_from_landmarks(
         # Calculate zone width as percentage of MCP-PIP distance
         # This makes zone proportional to finger anatomy
         mcp_pip_distance = np.linalg.norm(pip - mcp)
-        zone_half_width = mcp_pip_distance * 0.25  # 50% of MCP-PIP segment
+        zone_half_width = mcp_pip_distance * (ANATOMICAL_ZONE_WIDTH_FACTOR / 2)
 
         # Calculate start and end points along axis
         start_point = zone_center - direction * zone_half_width
@@ -481,18 +501,21 @@ def compute_cross_section_width(
     Measure finger width by sampling cross-sections perpendicular to axis.
 
     Args:
-        contour: Finger contour points (Nx2)
-        axis_data: Output from estimate_finger_axis()
-        zone_data: Output from localize_ring_zone()
-        num_samples: Number of cross-section samples
+        contour: Finger contour points (Nx2 array in x,y format)
+        axis_data: Output from estimate_finger_axis() containing center,
+                   direction, length, palm_end, tip_end
+        zone_data: Output from localize_ring_zone() containing start_point,
+                   end_point, center_point
+        num_samples: Number of cross-section samples (default 20)
 
     Returns:
         Dictionary containing:
         - widths_px: List of width measurements in pixels
-        - sample_points: List of (left, right) intersection points
+        - sample_points: List of (left, right) intersection point tuples
         - median_width_px: Median width in pixels
         - std_width_px: Standard deviation of widths
         - mean_width_px: Mean width in pixels
+        - num_samples: Actual number of successful measurements
     """
     direction = axis_data["direction"]
     start_point = zone_data["start_point"]
@@ -563,19 +586,22 @@ def line_contour_intersections(
     """
     Find intersection points between a line and a contour.
 
+    Uses parametric line-segment intersection to find where an infinite line
+    intersects with the contour edges.
+
     Args:
-        contour: Contour points (Nx2)
+        contour: Contour points (Nx2 array in x,y format)
         point: A point on the line (x, y)
-        direction: Line direction vector (dx, dy)
+        direction: Line direction vector (dx, dy), will be normalized
 
     Returns:
-        List of intersection points
+        List of intersection points as (x, y) tuples
     """
     intersections = []
 
     # Normalize direction
     direction = np.array(direction, dtype=np.float32)
-    direction = direction / (np.linalg.norm(direction) + 1e-8)
+    direction = direction / (np.linalg.norm(direction) + EPSILON)
 
     point = np.array(point, dtype=np.float32)
 
@@ -600,7 +626,7 @@ def line_contour_intersections(
 
         # Check if matrix is singular (parallel lines)
         det = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
-        if abs(det) < 1e-8:
+        if abs(det) < MIN_DETERMINANT_FOR_INTERSECTION:
             continue
 
         # Solve for t and s

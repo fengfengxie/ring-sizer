@@ -17,15 +17,153 @@ Functions:
 
 import cv2
 import numpy as np
+import logging
 from typing import Dict, Any, Optional, Tuple, List
 
+from src.edge_refinement_constants import (
+    # ROI Extraction
+    ROI_PADDING_PX,
+    FINGER_WIDTH_RATIO,
+    # Sobel Filter
+    DEFAULT_KERNEL_SIZE,
+    VALID_KERNEL_SIZES,
+    # Edge Detection
+    DEFAULT_GRADIENT_THRESHOLD,
+    MIN_FINGER_WIDTH_CM,
+    MAX_FINGER_WIDTH_CM,
+    WIDTH_TOLERANCE_FACTOR,
+    # Sub-Pixel Refinement
+    MAX_SUBPIXEL_OFFSET,
+    MIN_PARABOLA_DENOMINATOR,
+    # Outlier Filtering
+    MAD_OUTLIER_THRESHOLD,
+    # Edge Quality Scoring
+    GRADIENT_STRENGTH_NORMALIZER,
+    SMOOTHNESS_VARIANCE_NORMALIZER,
+    QUALITY_WEIGHT_GRADIENT,
+    QUALITY_WEIGHT_CONSISTENCY,
+    QUALITY_WEIGHT_SMOOTHNESS,
+    QUALITY_WEIGHT_SYMMETRY,
+    # Auto Fallback Decision
+    MIN_QUALITY_SCORE_THRESHOLD,
+    MIN_CONSISTENCY_THRESHOLD,
+    MIN_REALISTIC_WIDTH_CM,
+    MAX_REALISTIC_WIDTH_CM,
+    MAX_CONTOUR_DIFFERENCE_PCT,
+)
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Helper Functions (extracted from nested scope)
+# =============================================================================
+
+def _get_axis_x_at_row(row_y: float, axis_center: Optional[np.ndarray],
+                       axis_direction: Optional[np.ndarray], width: int) -> float:
+    """
+    Get axis x-coordinate at given row y-coordinate.
+
+    Args:
+        row_y: Row y-coordinate
+        axis_center: Axis center point (x, y)
+        axis_direction: Axis direction vector (dx, dy)
+        width: Image width (for fallback)
+
+    Returns:
+        X-coordinate of axis at given row
+    """
+    if axis_center is None or axis_direction is None:
+        return width / 2  # Fallback to center
+
+    if abs(axis_direction[1]) < 1e-6:
+        # Nearly horizontal axis
+        return axis_center[0]
+    else:
+        # Parametric line: P = axis_center + t * axis_direction
+        t = (row_y - axis_center[1]) / axis_direction[1]
+        return axis_center[0] + t * axis_direction[0]
+
+
+def _find_edges_from_axis(
+    row_gradient: np.ndarray,
+    row_y: float,
+    axis_x: float,
+    threshold: float,
+    min_width_px: Optional[float],
+    max_width_px: Optional[float]
+) -> Optional[Tuple[float, float, float, float]]:
+    """
+    Find left and right edges by expanding from axis position.
+
+    Strategy (AXIS-EXPANSION):
+    1. Start at axis x-coordinate (we KNOW this is inside the finger)
+    2. Search LEFT from axis: find closest salient edge (gradient > threshold)
+    3. Search RIGHT from axis: find closest salient edge (gradient > threshold)
+    4. Validate width is within realistic range (16-23mm)
+
+    This is more robust than symmetry scoring because:
+    - MediaPipe axis may not be perfectly centered
+    - We use axis as strong anchor (guaranteed to be INSIDE finger)
+    - Find nearest edges outward (most reliable skin boundaries)
+
+    Args:
+        row_gradient: Gradient magnitude for this row
+        row_y: Row y-coordinate
+        axis_x: Axis x-coordinate at this row
+        threshold: Gradient threshold for valid edge
+        min_width_px: Minimum valid width in pixels (None to skip)
+        max_width_px: Maximum valid width in pixels (None to skip)
+
+    Returns:
+        Tuple of (left_x, right_x, left_strength, right_strength) or None if invalid
+    """
+    if axis_x < 0 or axis_x >= len(row_gradient):
+        return None
+
+    # Search LEFT from axis (go leftward)
+    left_edge_x = None
+    left_strength = 0
+    for x in range(int(axis_x), -1, -1):
+        if row_gradient[x] > threshold:
+            # Found a salient edge - this is our left boundary
+            left_edge_x = x
+            left_strength = row_gradient[x]
+            break
+
+    # Search RIGHT from axis (go rightward)
+    right_edge_x = None
+    right_strength = 0
+    for x in range(int(axis_x), len(row_gradient)):
+        if row_gradient[x] > threshold:
+            # Found a salient edge - this is our right boundary
+            right_edge_x = x
+            right_strength = row_gradient[x]
+            break
+
+    if left_edge_x is None or right_edge_x is None:
+        return None
+
+    # Validate width is within realistic finger range
+    width = right_edge_x - left_edge_x
+    if min_width_px is not None and max_width_px is not None:
+        if width < min_width_px or width > max_width_px:
+            return None  # Width out of realistic range
+
+    return (left_edge_x, right_edge_x, left_strength, right_strength)
+
+
+# =============================================================================
+# Main Functions
+# =============================================================================
 
 def extract_ring_zone_roi(
     image: np.ndarray,
     axis_data: Dict[str, Any],
     zone_data: Dict[str, Any],
     finger_mask: Optional[np.ndarray] = None,
-    padding: int = 50,
+    padding: int = ROI_PADDING_PX,
     rotate_align: bool = False
 ) -> Dict[str, Any]:
     """
@@ -35,7 +173,8 @@ def extract_ring_zone_roi(
         image: Input BGR image
         axis_data: Output from estimate_finger_axis()
         zone_data: Output from localize_ring_zone()
-        padding: Extra pixels around zone for gradient context (default 50)
+        finger_mask: Optional finger mask for constrained detection
+        padding: Extra pixels around zone for gradient context
         rotate_align: If True, rotate ROI so finger axis is vertical
 
     Returns:
@@ -64,7 +203,7 @@ def extract_ring_zone_roi(
     # Estimate finger width from axis length (rough approximation)
     # Typical finger aspect ratio is ~3:1 to 5:1 (length:width)
     # Use conservative estimate to ensure we capture full finger width
-    estimated_width = axis_data["length"] / 3.0  # More conservative
+    estimated_width = axis_data["length"] / FINGER_WIDTH_RATIO
 
     # Define ROI bounds
     # ROI extends from start to end along axis, ±(width/2 + padding) perpendicular
@@ -158,7 +297,7 @@ def extract_ring_zone_roi(
     # Convert axis center point and direction to ROI coordinates
     axis_center = axis_data.get("center", (start_point + end_point) / 2)
     axis_center_in_roi = axis_center - np.array([x_min, y_min], dtype=np.float32)
-    
+
     # Direction vector stays the same (it's not affected by translation)
     axis_direction_in_roi = direction.copy()
 
@@ -181,7 +320,7 @@ def extract_ring_zone_roi(
 
 def apply_sobel_filters(
     roi_image: np.ndarray,
-    kernel_size: int = 3,
+    kernel_size: int = DEFAULT_KERNEL_SIZE,
     axis_direction: str = "auto"
 ) -> Dict[str, Any]:
     """
@@ -209,8 +348,8 @@ def apply_sobel_filters(
         - kernel_size: Kernel size used
         - filter_orientation: "horizontal" or "vertical"
     """
-    if kernel_size not in [3, 5, 7]:
-        raise ValueError(f"Invalid kernel_size: {kernel_size}. Use 3, 5, or 7")
+    if kernel_size not in VALID_KERNEL_SIZES:
+        raise ValueError(f"Invalid kernel_size: {kernel_size}. Use {VALID_KERNEL_SIZES}")
 
     h, w = roi_image.shape
 
@@ -218,7 +357,7 @@ def apply_sobel_filters(
     if axis_direction == "auto":
         # After rotation normalization, finger is always vertical (upright)
         # Finger runs vertically → detect left/right edges → use horizontal filter
-        # 
+        #
         # NOTE: ROI aspect ratio is NOT reliable after rotation normalization!
         # The ROI may be wider than tall even when finger is vertical.
         # Always use horizontal filter orientation for upright hands.
@@ -265,7 +404,7 @@ def apply_sobel_filters(
 def detect_edges_per_row(
     gradient_data: Dict[str, Any],
     roi_data: Dict[str, Any],
-    threshold: float = 30.0,
+    threshold: float = DEFAULT_GRADIENT_THRESHOLD,
     expected_width_px: Optional[float] = None,
     scale_px_per_cm: Optional[float] = None
 ) -> Dict[str, Any]:
@@ -301,96 +440,27 @@ def detect_edges_per_row(
     filter_orientation = gradient_data["filter_orientation"]
 
     h, w = gradient_magnitude.shape
-    
+
     # Calculate realistic finger width range in pixels
-    # Typical adult finger widths: 16mm (size 6) to 23mm (size 13)
-    # This is tighter than before (was 14-28mm) for better accuracy
-    min_finger_width_cm = 1.6
-    max_finger_width_cm = 2.3
-    
     min_width_px = None
     max_width_px = None
     if scale_px_per_cm is not None:
-        min_width_px = min_finger_width_cm * scale_px_per_cm
-        max_width_px = max_finger_width_cm * scale_px_per_cm
-        print(f"  [DEBUG] Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px ({min_finger_width_cm}-{max_finger_width_cm}cm)")
+        min_width_px = MIN_FINGER_WIDTH_CM * scale_px_per_cm
+        max_width_px = MAX_FINGER_WIDTH_CM * scale_px_per_cm
+        logger.debug(f"Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px ({MIN_FINGER_WIDTH_CM}-{MAX_FINGER_WIDTH_CM}cm)")
     elif expected_width_px is not None:
-        # Use expected width with ±25% tolerance
-        min_width_px = expected_width_px * 0.75
-        max_width_px = expected_width_px * 1.25
-        print(f"  [DEBUG] Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px (±25% of expected)")
+        # Use expected width with tolerance
+        min_width_px = expected_width_px * (1 - WIDTH_TOLERANCE_FACTOR)
+        max_width_px = expected_width_px * (1 + WIDTH_TOLERANCE_FACTOR)
+        logger.debug(f"Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px (±{WIDTH_TOLERANCE_FACTOR*100}% of expected)")
     else:
-        print(f"  [DEBUG] No width constraint (scale and expected width both None)")
-    
+        logger.debug("No width constraint (scale and expected width both None)")
+
     # Get axis information - this is our strong anchor point (INSIDE the finger)
     axis_center = roi_data.get("axis_center_in_roi")
     axis_direction = roi_data.get("axis_direction_in_roi")
     zone_start = roi_data.get("zone_start_in_roi")
     zone_end = roi_data.get("zone_end_in_roi")
-    
-    def find_edges_from_axis(row_gradient, row_y, axis_x):
-        """
-        Find left and right edges by expanding from axis position.
-        
-        Strategy (AXIS-EXPANSION):
-        1. Start at axis x-coordinate (we KNOW this is inside the finger)
-        2. Search LEFT from axis: find closest salient edge (gradient > threshold)
-        3. Search RIGHT from axis: find closest salient edge (gradient > threshold)
-        4. Validate width is within realistic range (16-23mm)
-        
-        This is more robust than symmetry scoring because:
-        - MediaPipe axis may not be perfectly centered
-        - We use axis as strong anchor (guaranteed to be INSIDE finger)
-        - Find nearest edges outward (most reliable skin boundaries)
-        
-        Returns: (left_x, right_x, left_strength, right_strength) or None if invalid
-        """
-        if axis_x < 0 or axis_x >= len(row_gradient):
-            return None
-        
-        # Search LEFT from axis (go leftward)
-        left_edge_x = None
-        left_strength = 0
-        for x in range(int(axis_x), -1, -1):
-            if row_gradient[x] > threshold:
-                # Found a salient edge - this is our left boundary
-                left_edge_x = x
-                left_strength = row_gradient[x]
-                break
-        
-        # Search RIGHT from axis (go rightward)
-        right_edge_x = None
-        right_strength = 0
-        for x in range(int(axis_x), len(row_gradient)):
-            if row_gradient[x] > threshold:
-                # Found a salient edge - this is our right boundary
-                right_edge_x = x
-                right_strength = row_gradient[x]
-                break
-        
-        if left_edge_x is None or right_edge_x is None:
-            return None
-        
-        # Validate width is within realistic finger range
-        width = right_edge_x - left_edge_x
-        if min_width_px is not None and max_width_px is not None:
-            if width < min_width_px or width > max_width_px:
-                return None  # Width out of realistic range
-        
-        return (left_edge_x, right_edge_x, left_strength, right_strength)
-    
-    def get_axis_x(row_y):
-        """Get axis x-coordinate at given row."""
-        if axis_center is None or axis_direction is None:
-            return w / 2  # Fallback to center
-        
-        if abs(axis_direction[1]) < 1e-6:
-            # Nearly horizontal axis
-            return axis_center[0]
-        else:
-            # Parametric line: P = axis_center + t * axis_direction
-            t = (row_y - axis_center[1]) / axis_direction[1]
-            return axis_center[0] + t * axis_direction[0]
 
     # For horizontal filter orientation (detecting left/right edges)
     # Process each row to find left and right edges
@@ -405,17 +475,18 @@ def detect_edges_per_row(
         for row in range(num_rows):
             # NEW APPROACH: Axis-expansion method
             # Get axis position (our anchor point INSIDE the finger)
-            axis_x = get_axis_x(row)
-            
+            axis_x = _get_axis_x_at_row(row, axis_center, axis_direction, w)
+
             # Get gradient for this row
             row_gradient = gradient_magnitude[row, :]
-            
+
             # Find edges by expanding from axis
-            result = find_edges_from_axis(row_gradient, row, axis_x)
-            
+            result = _find_edges_from_axis(row_gradient, row, axis_x, threshold,
+                                          min_width_px, max_width_px)
+
             if result is None:
                 continue  # No valid edges found
-            
+
             left_edge_x, right_edge_x, left_strength, right_strength = result
 
             # Mark as valid
@@ -543,11 +614,11 @@ def refine_edge_subpixel(
                 b = (g_plus - g_minus) / 2.0
 
                 # Peak at x_peak = -b/(2a)
-                if abs(a) > 1e-6:  # Avoid division by zero
+                if abs(a) > MIN_PARABOLA_DENOMINATOR:  # Avoid division by zero
                     x_peak = -b / (2.0 * a)
 
-                    # Constrain to reasonable range (±0.5 pixels)
-                    if abs(x_peak) <= 0.5:
+                    # Constrain to reasonable range
+                    if abs(x_peak) <= MAX_SUBPIXEL_OFFSET:
                         refined_positions[i] = edge_pos + x_peak
 
     elif method == "gaussian":
@@ -619,7 +690,7 @@ def measure_width_from_edges(
 
             subpixel_used = True
         except Exception as e:
-            print(f"  Sub-pixel refinement failed: {e}, using integer positions")
+            logger.warning(f"Sub-pixel refinement failed: {e}, using integer positions")
             # Fall back to integer positions
             left_edges = edge_data["left_edges"]
             right_edges = edge_data["right_edges"]
@@ -643,8 +714,7 @@ def measure_width_from_edges(
 
     # Outliers are >3 MAD from median (more robust than std dev)
     if mad > 0:
-        outlier_threshold = 3.0
-        is_outlier = np.abs(widths_px - median) > (outlier_threshold * mad)
+        is_outlier = np.abs(widths_px - median) > (MAD_OUTLIER_THRESHOLD * mad)
         widths_filtered = widths_px[~is_outlier]
         outliers_removed = np.sum(is_outlier)
     else:
@@ -663,10 +733,10 @@ def measure_width_from_edges(
 
     # Convert to cm
     median_width_cm = median_width_px / scale_px_per_cm
-    
-    # DEBUG: Print raw measurements
-    print(f"  [DEBUG] Raw median width: {median_width_px:.2f}px, scale: {scale_px_per_cm:.2f} px/cm → {median_width_cm:.4f}cm")
-    print(f"  [DEBUG] Width range: {np.min(widths_filtered):.1f}-{np.max(widths_filtered):.1f}px, std: {std_width_px:.1f}px")
+
+    # Log measurements
+    logger.debug(f"Raw median width: {median_width_px:.2f}px, scale: {scale_px_per_cm:.2f} px/cm → {median_width_cm:.4f}cm")
+    logger.debug(f"Width range: {np.min(widths_filtered):.1f}-{np.max(widths_filtered):.1f}px, std: {std_width_px:.1f}px")
 
     return {
         "widths_px": widths_filtered.tolist(),
@@ -723,8 +793,7 @@ def compute_edge_quality_score(
     if len(valid_left_strengths) > 0:
         avg_gradient_strength = (np.mean(valid_left_strengths) + np.mean(valid_right_strengths)) / 2.0
         # Normalize: typical strong edge is 20-50, weak is <10
-        # Score = min(strength / 30, 1.0)
-        gradient_strength_score = min(avg_gradient_strength / 30.0, 1.0)
+        gradient_strength_score = min(avg_gradient_strength / GRADIENT_STRENGTH_NORMALIZER, 1.0)
     else:
         avg_gradient_strength = 0.0
         gradient_strength_score = 0.0
@@ -748,8 +817,7 @@ def compute_edge_quality_score(
         avg_variance = (left_variance + right_variance) / 2.0
 
         # Normalize: typical finger has variance <100, noisy edges >500
-        # Score = exp(-variance / 200) to map variance to 0-1
-        smoothness_score = np.exp(-avg_variance / 200.0)
+        smoothness_score = np.exp(-avg_variance / SMOOTHNESS_VARIANCE_NORMALIZER)
     else:
         avg_variance = 0.0
         smoothness_score = 0.0
@@ -771,15 +839,11 @@ def compute_edge_quality_score(
         symmetry_score = 0.0
 
     # Weighted overall score
-    # Gradient strength: 40% (most important - indicates clear edges)
-    # Consistency: 30% (good coverage)
-    # Smoothness: 20% (stable detection)
-    # Symmetry: 10% (balanced detection)
     overall_score = (
-        0.4 * gradient_strength_score +
-        0.3 * consistency_score +
-        0.2 * smoothness_score +
-        0.1 * symmetry_score
+        QUALITY_WEIGHT_GRADIENT * gradient_strength_score +
+        QUALITY_WEIGHT_CONSISTENCY * consistency_score +
+        QUALITY_WEIGHT_SMOOTHNESS * smoothness_score +
+        QUALITY_WEIGHT_SYMMETRY * symmetry_score
     )
 
     return {
@@ -800,9 +864,9 @@ def compute_edge_quality_score(
 def should_use_sobel_measurement(
     sobel_result: Dict[str, Any],
     contour_result: Optional[Dict[str, Any]] = None,
-    min_quality_score: float = 0.7,
-    min_consistency: float = 0.5,
-    max_difference_pct: float = 50.0
+    min_quality_score: float = MIN_QUALITY_SCORE_THRESHOLD,
+    min_consistency: float = MIN_CONSISTENCY_THRESHOLD,
+    max_difference_pct: float = MAX_CONTOUR_DIFFERENCE_PCT
 ) -> Tuple[bool, str]:
     """
     Decide whether to use Sobel measurement or fall back to contour.
@@ -841,8 +905,8 @@ def should_use_sobel_measurement(
     if sobel_width is None or sobel_width <= 0:
         return False, "invalid_measurement"
 
-    # Typical finger width is 1.0-3.0 cm
-    if sobel_width < 0.8 or sobel_width > 3.5:
+    # Typical finger width range
+    if sobel_width < MIN_REALISTIC_WIDTH_CM or sobel_width > MAX_REALISTIC_WIDTH_CM:
         return False, f"unrealistic_width_{sobel_width:.2f}cm"
 
     # Check 4: Agreement with contour (if available)
@@ -867,8 +931,8 @@ def refine_edges_sobel(
     scale_px_per_cm: float,
     finger_mask: Optional[np.ndarray] = None,
     finger_landmarks: Optional[np.ndarray] = None,
-    sobel_threshold: float = 15.0,
-    kernel_size: int = 3,
+    sobel_threshold: float = DEFAULT_GRADIENT_THRESHOLD,
+    kernel_size: int = DEFAULT_KERNEL_SIZE,
     rotate_align: bool = False,
     expected_width_px: Optional[float] = None,
     debug_dir: Optional[str] = None,
@@ -918,30 +982,30 @@ def refine_edges_sobel(
         from src.debug_observer import draw_width_measurements, draw_outlier_detection
         from src.debug_observer import draw_comprehensive_edge_overlay
         observer = DebugObserver(debug_dir)
-    
+
     # Stage A: Axis & Zone Visualization
     if debug_dir:
         # A.1: Landmark axis
         observer.draw_and_save("01_landmark_axis", image, draw_landmark_axis, axis_data, finger_landmarks)
-        
+
         # A.2: Ring zone + ROI bounds (need to extract bounds first)
         # We'll save this after ROI extraction
-    
+
     # Step 1: Extract ROI
     roi_data = extract_ring_zone_roi(
         image, axis_data, zone_data,
         finger_mask=finger_mask,
-        padding=50, rotate_align=rotate_align
+        padding=ROI_PADDING_PX, rotate_align=rotate_align
     )
-    
-    print(f"  [DEBUG] ROI size: {roi_data['roi_width']}x{roi_data['roi_height']}px")
-    print(f"  [DEBUG] ROI bounds: {roi_data['roi_bounds']}")
-    
+
+    logger.debug(f"ROI size: {roi_data['roi_width']}x{roi_data['roi_height']}px")
+    logger.debug(f"ROI bounds: {roi_data['roi_bounds']}")
+
     if debug_dir:
         # A.2: Ring zone + ROI bounds
         roi_bounds = roi_data["roi_bounds"]
         observer.draw_and_save("02_ring_zone_roi", image, draw_ring_zone_roi, zone_data, roi_bounds)
-        
+
         # A.3: ROI extraction
         observer.draw_and_save("03_roi_extraction", roi_data["roi_image"], draw_roi_extraction, roi_data.get("roi_mask"))
 
@@ -951,17 +1015,17 @@ def refine_edges_sobel(
         kernel_size=kernel_size,
         axis_direction="auto"
     )
-    
+
     if debug_dir:
         # Stage B: Sobel Filtering
         # B.1: Left-to-right gradient
         grad_left = draw_gradient_visualization(gradient_data["gradient_x"], cv2.COLORMAP_JET)
         observer.save_stage("04_sobel_left_to_right", grad_left)
-        
+
         # B.2: Right-to-left gradient
         grad_right = draw_gradient_visualization(-gradient_data["gradient_x"], cv2.COLORMAP_JET)
         observer.save_stage("05_sobel_right_to_left", grad_right)
-        
+
         # B.3: Gradient magnitude
         grad_mag = draw_gradient_visualization(gradient_data["gradient_magnitude"], cv2.COLORMAP_HOT)
         observer.save_stage("06_gradient_magnitude", grad_mag)
@@ -973,21 +1037,21 @@ def refine_edges_sobel(
         expected_width_px=expected_width_px,
         scale_px_per_cm=scale_px_per_cm
     )
-    
-    print(f"  [DEBUG] Valid rows: {edge_data['num_valid_rows']}/{len(edge_data['valid_rows'])} ({edge_data['num_valid_rows']/len(edge_data['valid_rows'])*100:.1f}%)")
+
+    logger.debug(f"Valid rows: {edge_data['num_valid_rows']}/{len(edge_data['valid_rows'])} ({edge_data['num_valid_rows']/len(edge_data['valid_rows'])*100:.1f}%)")
     if edge_data['num_valid_rows'] > 0:
         valid_left = edge_data['left_edges'][edge_data['valid_rows']]
         valid_right = edge_data['right_edges'][edge_data['valid_rows']]
-        print(f"  [DEBUG] Left edges range: {np.min(valid_left):.1f}-{np.max(valid_left):.1f}px")
-        print(f"  [DEBUG] Right edges range: {np.min(valid_right):.1f}-{np.max(valid_right):.1f}px")
+        logger.debug(f"Left edges range: {np.min(valid_left):.1f}-{np.max(valid_left):.1f}px")
+        logger.debug(f"Right edges range: {np.min(valid_right):.1f}-{np.max(valid_right):.1f}px")
         widths = valid_right - valid_left
-        print(f"  [DEBUG] Raw widths range: {np.min(widths):.1f}-{np.max(widths):.1f}px, median: {np.median(widths):.1f}px")
-    
+        logger.debug(f"Raw widths range: {np.min(widths):.1f}-{np.max(widths):.1f}px, median: {np.median(widths):.1f}px")
+
     if debug_dir:
         # B.4: Edge candidates
-        observer.draw_and_save("07_edge_candidates", roi_data["roi_image"], 
+        observer.draw_and_save("07_edge_candidates", roi_data["roi_image"],
                              draw_edge_candidates, gradient_data["gradient_magnitude"], sobel_threshold)
-        
+
         # B.5: Selected edges
         observer.draw_and_save("08_selected_edges", roi_data["roi_image"], draw_selected_edges, edge_data)
 
@@ -997,28 +1061,28 @@ def refine_edges_sobel(
         gradient_data=gradient_data,
         use_subpixel=True
     )
-    
+
     if debug_dir:
         # Stage C: Measurement
         # C.1: Sub-pixel refinement (use selected edges for now)
         observer.draw_and_save("09_subpixel_refinement", roi_data["roi_image"], draw_selected_edges, edge_data)
-        
+
         # C.2: Width measurements
-        observer.draw_and_save("10_width_measurements", roi_data["roi_image"], 
+        observer.draw_and_save("10_width_measurements", roi_data["roi_image"],
                              draw_width_measurements, edge_data, width_data)
-        
+
         # C.3: Width distribution (histogram - requires matplotlib)
         try:
             _save_width_distribution(width_data, debug_dir)
         except:
             pass  # Skip if matplotlib not available
-        
+
         # C.4: Outlier detection
-        observer.draw_and_save("12_outlier_detection", roi_data["roi_image"], 
+        observer.draw_and_save("12_outlier_detection", roi_data["roi_image"],
                              draw_outlier_detection, edge_data, width_data)
-        
+
         # C.5: Comprehensive edge overlay on full image
-        observer.draw_and_save("13_comprehensive_overlay", image, 
+        observer.draw_and_save("13_comprehensive_overlay", image,
                              draw_comprehensive_edge_overlay,
                              edge_data, roi_data["roi_bounds"], axis_data, zone_data,
                              width_data, scale_px_per_cm)
@@ -1060,26 +1124,26 @@ def _save_width_distribution(width_data: Dict[str, Any], debug_dir: str) -> None
         import os
     except ImportError:
         return
-    
+
     widths_px = width_data.get("widths_px", [])
     if len(widths_px) == 0:
         return
-    
+
     median_width_px = width_data["median_width_px"]
     mean_width_px = width_data["mean_width_px"]
-    
+
     # Create histogram
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.hist(widths_px, bins=30, color='skyblue', edgecolor='black', alpha=0.7)
     ax.axvline(median_width_px, color='red', linestyle='--', linewidth=2, label=f'Median: {median_width_px:.1f} px')
     ax.axvline(mean_width_px, color='orange', linestyle='--', linewidth=2, label=f'Mean: {mean_width_px:.1f} px')
-    
+
     ax.set_xlabel('Width (pixels)', fontsize=12)
     ax.set_ylabel('Frequency', fontsize=12)
     ax.set_title('Distribution of Cross-Section Widths', fontsize=14, fontweight='bold')
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
-    
+
     # Save
     output_path = os.path.join(debug_dir, "11_width_distribution.png")
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
