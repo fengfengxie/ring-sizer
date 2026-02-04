@@ -92,21 +92,22 @@ def _find_edges_from_axis(
     axis_x: float,
     threshold: float,
     min_width_px: Optional[float],
-    max_width_px: Optional[float]
+    max_width_px: Optional[float],
+    row_mask: Optional[np.ndarray] = None
 ) -> Optional[Tuple[float, float, float, float]]:
     """
     Find left and right edges by expanding from axis position.
 
-    Strategy (AXIS-EXPANSION):
-    1. Start at axis x-coordinate (we KNOW this is inside the finger)
-    2. Search LEFT from axis: find closest salient edge (gradient > threshold)
-    3. Search RIGHT from axis: find closest salient edge (gradient > threshold)
-    4. Validate width is within realistic range (16-23mm)
+    Strategy:
+    - MASK-CONSTRAINED MODE (when row_mask provided):
+      1. Find leftmost/rightmost mask pixels (finger boundaries)
+      2. Search for strongest gradient within ±10px of mask boundaries
+      3. Combines anatomical accuracy (mask) with sub-pixel precision (gradient)
 
-    This is more robust than symmetry scoring because:
-    - MediaPipe axis may not be perfectly centered
-    - We use axis as strong anchor (guaranteed to be INSIDE finger)
-    - Find nearest edges outward (most reliable skin boundaries)
+    - AXIS-EXPANSION MODE (when row_mask is None):
+      1. Start at axis x-coordinate (INSIDE the finger)
+      2. Search LEFT/RIGHT from axis for closest salient edge
+      3. Validate width is within realistic range
 
     Args:
         row_gradient: Gradient magnitude for this row
@@ -115,6 +116,7 @@ def _find_edges_from_axis(
         threshold: Gradient threshold for valid edge
         min_width_px: Minimum valid width in pixels (None to skip)
         max_width_px: Maximum valid width in pixels (None to skip)
+        row_mask: Optional mask row (True = finger pixel) for constrained search
 
     Returns:
         Tuple of (left_x, right_x, left_strength, right_strength) or None if invalid
@@ -122,28 +124,97 @@ def _find_edges_from_axis(
     if axis_x < 0 or axis_x >= len(row_gradient):
         return None
 
-    # Search LEFT from axis (go leftward)
-    left_edge_x = None
-    left_strength = 0
-    for x in range(int(axis_x), -1, -1):
-        if row_gradient[x] > threshold:
-            # Found a salient edge - this is our left boundary
-            left_edge_x = x
-            left_strength = row_gradient[x]
-            break
+    # MASK-CONSTRAINED MODE (preferred when available)
+    if row_mask is not None and np.any(row_mask):
+        # Strategy: Search FROM axis OUTWARD, constrained by mask
+        # This avoids picking background edges while using gradient precision
 
-    # Search RIGHT from axis (go rightward)
-    right_edge_x = None
-    right_strength = 0
-    for x in range(int(axis_x), len(row_gradient)):
-        if row_gradient[x] > threshold:
-            # Found a salient edge - this is our right boundary
-            right_edge_x = x
-            right_strength = row_gradient[x]
-            break
+        mask_indices = np.where(row_mask)[0]
+        if len(mask_indices) < 2:
+            return None  # Mask too small
 
-    if left_edge_x is None or right_edge_x is None:
-        return None
+        left_mask_boundary = mask_indices[0]
+        right_mask_boundary = mask_indices[-1]
+
+        # Search LEFT from axis, stopping at mask boundary
+        left_edge_x = None
+        left_strength = 0
+
+        # Start from axis, go left until we reach left mask boundary
+        search_start = max(left_mask_boundary, int(axis_x))
+        for x in range(search_start, left_mask_boundary - 1, -1):
+            if x < 0 or x >= len(row_gradient):
+                continue
+            if row_gradient[x] > threshold:
+                # Found a strong edge - update if stronger than previous
+                if row_gradient[x] > left_strength:
+                    left_edge_x = x
+                    left_strength = row_gradient[x]
+
+        # If no edge found with full threshold, try with relaxed threshold
+        if left_edge_x is None:
+            relaxed_threshold = threshold * 0.5
+            for x in range(search_start, left_mask_boundary - 1, -1):
+                if x < 0 or x >= len(row_gradient):
+                    continue
+                if row_gradient[x] > relaxed_threshold:
+                    if row_gradient[x] > left_strength:
+                        left_edge_x = x
+                        left_strength = row_gradient[x]
+
+        # Search RIGHT from axis, stopping at mask boundary
+        right_edge_x = None
+        right_strength = 0
+
+        # Start from axis, go right until we reach right mask boundary
+        search_start = min(right_mask_boundary, int(axis_x))
+        for x in range(search_start, right_mask_boundary + 1):
+            if x < 0 or x >= len(row_gradient):
+                continue
+            if row_gradient[x] > threshold:
+                # Found a strong edge - update if stronger than previous
+                if row_gradient[x] > right_strength:
+                    right_edge_x = x
+                    right_strength = row_gradient[x]
+
+        # If no edge found with full threshold, try with relaxed threshold
+        if right_edge_x is None:
+            relaxed_threshold = threshold * 0.5
+            for x in range(search_start, right_mask_boundary + 1):
+                if x < 0 or x >= len(row_gradient):
+                    continue
+                if row_gradient[x] > relaxed_threshold:
+                    if row_gradient[x] > right_strength:
+                        right_edge_x = x
+                        right_strength = row_gradient[x]
+
+        if left_edge_x is None or right_edge_x is None:
+            return None  # No valid edges found
+
+    else:
+        # AXIS-EXPANSION MODE (fallback when no mask)
+        # Search LEFT from axis (go leftward)
+        left_edge_x = None
+        left_strength = 0
+        for x in range(int(axis_x), -1, -1):
+            if row_gradient[x] > threshold:
+                # Found a salient edge - this is our left boundary
+                left_edge_x = x
+                left_strength = row_gradient[x]
+                break
+
+        # Search RIGHT from axis (go rightward)
+        right_edge_x = None
+        right_strength = 0
+        for x in range(int(axis_x), len(row_gradient)):
+            if row_gradient[x] > threshold:
+                # Found a salient edge - this is our right boundary
+                right_edge_x = x
+                right_strength = row_gradient[x]
+                break
+
+        if left_edge_x is None or right_edge_x is None:
+            return None
 
     # Validate width is within realistic finger range
     width = right_edge_x - left_edge_x
@@ -411,14 +482,15 @@ def detect_edges_per_row(
     """
     Detect left and right finger edges for each row (cross-section).
 
-    For each row in the ROI:
-    1. Find all pixels above gradient threshold
-    2. Use finger axis to determine left vs right side
-    3. Evaluate all left-right edge combinations using:
-       - Width constraint (16.5mm-22.5mm for typical fingers)
-       - Symmetry around axis (edges equidistant from center)
-       - Gradient strength (prefer stronger edges)
-    4. Select best combination based on weighted score
+    Uses mask-constrained mode when roi_mask is available:
+    1. Find leftmost/rightmost mask pixels (anatomical finger boundaries)
+    2. Search for gradient peaks within ±10px of mask boundaries
+    3. Combines anatomical accuracy with sub-pixel gradient precision
+
+    Falls back to axis-expansion mode when no mask:
+    1. Start at finger axis (guaranteed inside finger)
+    2. Expand left/right to find nearest salient edges
+    3. Validate width is within realistic range
 
     Args:
         gradient_data: Output from apply_sobel_filters()
@@ -435,6 +507,7 @@ def detect_edges_per_row(
         - edge_strengths_right: Gradient magnitude at right edges
         - valid_rows: Boolean mask of rows with successful detection
         - num_valid_rows: Count of successful detections
+        - mode_used: "mask_constrained" or "axis_expansion"
     """
     gradient_magnitude = gradient_data["gradient_magnitude"]
     filter_orientation = gradient_data["filter_orientation"]
@@ -462,6 +535,15 @@ def detect_edges_per_row(
     zone_start = roi_data.get("zone_start_in_roi")
     zone_end = roi_data.get("zone_end_in_roi")
 
+    # Get finger mask for constrained edge detection (if available)
+    roi_mask = roi_data.get("roi_mask")
+    mode_used = "mask_constrained" if roi_mask is not None else "axis_expansion"
+
+    if roi_mask is not None:
+        logger.debug(f"Using MASK-CONSTRAINED edge detection (mask shape: {roi_mask.shape})")
+    else:
+        logger.debug("Using AXIS-EXPANSION edge detection (no mask available)")
+
     # For horizontal filter orientation (detecting left/right edges)
     # Process each row to find left and right edges
     if filter_orientation == "horizontal":
@@ -473,16 +555,18 @@ def detect_edges_per_row(
         valid_rows = np.zeros(num_rows, dtype=bool)
 
         for row in range(num_rows):
-            # NEW APPROACH: Axis-expansion method
             # Get axis position (our anchor point INSIDE the finger)
             axis_x = _get_axis_x_at_row(row, axis_center, axis_direction, w)
 
             # Get gradient for this row
             row_gradient = gradient_magnitude[row, :]
 
-            # Find edges by expanding from axis
+            # Get mask for this row (if available)
+            row_mask = roi_mask[row, :] if roi_mask is not None else None
+
+            # Find edges using mask-constrained or axis-expansion method
             result = _find_edges_from_axis(row_gradient, row, axis_x, threshold,
-                                          min_width_px, max_width_px)
+                                          min_width_px, max_width_px, row_mask)
 
             if result is None:
                 continue  # No valid edges found
@@ -551,6 +635,7 @@ def detect_edges_per_row(
         "valid_rows": valid_rows,
         "num_valid_rows": int(num_valid),
         "filter_orientation": filter_orientation,
+        "mode_used": mode_used,  # "mask_constrained" or "axis_expansion"
     }
 
 

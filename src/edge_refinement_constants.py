@@ -85,10 +85,10 @@ QUALITY_WEIGHT_SYMMETRY = 0.1  # Bilateral symmetry: 10%
 # =============================================================================
 
 # Minimum quality score to use Sobel (otherwise fall back to contour)
-MIN_QUALITY_SCORE_THRESHOLD = 0.7
+MIN_QUALITY_SCORE_THRESHOLD = 0.65  # Lowered from 0.7 for mask-constrained mode
 
 # Minimum edge detection success rate
-MIN_CONSISTENCY_THRESHOLD = 0.5  # 50%
+MIN_CONSISTENCY_THRESHOLD = 0.30  # 30% (lowered from 50% for mask-constrained mode)
 
 # Realistic measurement range for validation
 MIN_REALISTIC_WIDTH_CM = 0.8
