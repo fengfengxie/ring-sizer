@@ -2,34 +2,186 @@
 Geometric computation utilities.
 
 This module handles:
-- Finger axis estimation (PCA)
+- Finger axis estimation (PCA and landmark-based)
 - Ring-wearing zone localization
 - Cross-section width measurement
 - Coordinate transformations
 """
 
 import numpy as np
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Tuple, List, Optional, Dict, Any, Literal
+
+# Type for axis estimation method
+AxisMethod = Literal["auto", "landmarks", "pca"]
 
 
-def estimate_finger_axis(
+def _validate_landmark_quality(landmarks: np.ndarray) -> Tuple[bool, str]:
+    """
+    Validate quality of finger landmarks for axis estimation.
+
+    Args:
+        landmarks: 4x2 array of finger landmarks [MCP, PIP, DIP, TIP]
+
+    Returns:
+        Tuple of (is_valid, reason)
+    """
+    if landmarks is None or len(landmarks) != 4:
+        return False, "landmarks_missing_or_incomplete"
+
+    # Check for NaN or infinite values
+    if not np.all(np.isfinite(landmarks)):
+        return False, "landmarks_contain_invalid_values"
+
+    # Check reasonable spacing (landmarks not collapsed)
+    # Calculate distances between consecutive landmarks
+    distances = []
+    for i in range(len(landmarks) - 1):
+        dist = np.linalg.norm(landmarks[i + 1] - landmarks[i])
+        distances.append(dist)
+
+    # Check if any distance is too small (collapsed landmarks)
+    min_distance = min(distances)
+    if min_distance < 5.0:  # Less than 5 pixels suggests collapsed/invalid landmarks
+        return False, "landmarks_too_close"
+
+    # Check for monotonically increasing progression (no crossovers)
+    # Calculate overall direction from MCP to TIP
+    overall_direction = landmarks[3] - landmarks[0]
+    overall_length = np.linalg.norm(overall_direction)
+
+    if overall_length < 20.0:  # Entire finger less than 20px suggests invalid
+        return False, "finger_too_short"
+
+    overall_direction = overall_direction / overall_length
+
+    # Project each landmark onto overall direction
+    # They should be monotonically increasing from MCP to TIP
+    projections = []
+    for i in range(len(landmarks)):
+        proj = np.dot(landmarks[i] - landmarks[0], overall_direction)
+        projections.append(proj)
+
+    # Check monotonic increase
+    for i in range(len(projections) - 1):
+        if projections[i + 1] <= projections[i]:
+            return False, "landmarks_not_monotonic"
+
+    return True, "valid"
+
+
+def estimate_finger_axis_from_landmarks(
+    landmarks: np.ndarray,
+    method: str = "linear_fit"
+) -> Dict[str, Any]:
+    """
+    Calculate finger axis directly from anatomical landmarks.
+
+    More robust than PCA for bent fingers since it uses anatomical structure.
+
+    Args:
+        landmarks: 4x2 array of finger landmarks [MCP, PIP, DIP, TIP]
+        method: Calculation method
+            - "endpoints": MCP to TIP vector (simple, fast)
+            - "linear_fit": Linear regression on all 4 landmarks (robust to noise)
+            - "median_direction": Median of 3 segment directions (robust to outliers)
+
+    Returns:
+        Dictionary containing:
+        - center: Axis center point (x, y)
+        - direction: Unit direction vector (dx, dy) pointing from palm to tip
+        - length: Estimated finger length in pixels
+        - palm_end: Palm-side endpoint (MCP position)
+        - tip_end: Fingertip endpoint (TIP position)
+        - method: Method used ("landmarks")
+    """
+    # Validate landmarks
+    is_valid, reason = _validate_landmark_quality(landmarks)
+    if not is_valid:
+        raise ValueError(f"Invalid landmarks for axis estimation: {reason}")
+
+    # Extract landmark positions
+    mcp = landmarks[0]  # Metacarpophalangeal joint (knuckle, palm-side)
+    pip = landmarks[1]  # Proximal interphalangeal joint
+    dip = landmarks[2]  # Distal interphalangeal joint
+    tip = landmarks[3]  # Fingertip
+
+    # Calculate direction based on method
+    if method == "endpoints":
+        # Simple: vector from MCP to TIP
+        direction = tip - mcp
+        direction_length = np.linalg.norm(direction)
+        direction = direction / direction_length
+
+    elif method == "linear_fit":
+        # Robust: linear regression on all 4 landmarks
+        # Fit y = mx + b to landmark points
+        x_coords = landmarks[:, 0]
+        y_coords = landmarks[:, 1]
+
+        # Use polyfit to get slope
+        coeffs = np.polyfit(x_coords, y_coords, deg=1)
+        slope = coeffs[0]
+
+        # Convert slope to direction vector
+        # If slope is m, direction is (1, m) normalized
+        direction = np.array([1.0, slope], dtype=np.float32)
+        direction = direction / np.linalg.norm(direction)
+
+        # Ensure direction points from palm (MCP) to tip (TIP)
+        if np.dot(direction, tip - mcp) < 0:
+            direction = -direction
+
+    elif method == "median_direction":
+        # Robust to outliers: median of segment directions
+        # Calculate direction vectors for each segment
+        seg1_dir = (pip - mcp) / np.linalg.norm(pip - mcp)
+        seg2_dir = (dip - pip) / np.linalg.norm(dip - pip)
+        seg3_dir = (tip - dip) / np.linalg.norm(tip - dip)
+
+        # Take median of each component
+        directions = np.array([seg1_dir, seg2_dir, seg3_dir])
+        median_dir = np.median(directions, axis=0)
+        direction = median_dir / np.linalg.norm(median_dir)
+
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'endpoints', 'linear_fit', or 'median_direction'")
+
+    # Calculate center as midpoint of all landmarks
+    center = np.mean(landmarks, axis=0)
+
+    # Calculate finger length
+    # Use actual landmark span for more accurate length
+    length = np.linalg.norm(tip - mcp)
+
+    # Palm end and tip end are just the MCP and TIP landmarks
+    palm_end = mcp.copy()
+    tip_end = tip.copy()
+
+    return {
+        "center": center.astype(np.float32),
+        "direction": direction.astype(np.float32),
+        "length": float(length),
+        "palm_end": palm_end.astype(np.float32),
+        "tip_end": tip_end.astype(np.float32),
+        "method": "landmarks",
+    }
+
+
+def _estimate_axis_pca(
     mask: np.ndarray,
     landmarks: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
-    Estimate the principal axis of a finger using PCA.
+    Estimate finger axis using PCA on mask points.
+
+    This is the original v0 implementation, now refactored as a helper function.
 
     Args:
         mask: Binary finger mask
         landmarks: Optional finger landmarks for orientation
 
     Returns:
-        Dictionary containing:
-        - center: Axis center point (x, y)
-        - direction: Unit direction vector (dx, dy)
-        - length: Estimated finger length in pixels
-        - palm_end: Palm-side endpoint
-        - tip_end: Fingertip endpoint
+        Dictionary containing axis data with method="pca"
     """
     # Get all non-zero points in the mask
     points = np.column_stack(np.where(mask > 0))  # Returns (row, col) i.e., (y, x)
@@ -123,7 +275,77 @@ def estimate_finger_axis(
         "length": float(length),
         "palm_end": palm_end.astype(np.float32),
         "tip_end": tip_end.astype(np.float32),
+        "method": "pca",
     }
+
+
+def estimate_finger_axis(
+    mask: np.ndarray,
+    landmarks: Optional[np.ndarray] = None,
+    method: AxisMethod = "auto",
+    landmark_method: str = "linear_fit",
+) -> Dict[str, Any]:
+    """
+    Estimate the principal axis of a finger using landmarks (preferred) or PCA (fallback).
+
+    v1 Enhancement: Now supports landmark-based axis estimation for improved accuracy
+    on bent fingers. Auto mode (default) uses landmarks when available and valid,
+    falling back to PCA if needed.
+
+    Args:
+        mask: Binary finger mask
+        landmarks: Optional finger landmarks (4x2 array: [MCP, PIP, DIP, TIP])
+        method: Axis estimation method
+            - "auto": Use landmarks if available and valid, else PCA (recommended)
+            - "landmarks": Force landmark-based (fails if landmarks invalid)
+            - "pca": Force PCA-based (v0 behavior)
+        landmark_method: Method for landmark-based estimation
+            ("endpoints", "linear_fit", "median_direction")
+
+    Returns:
+        Dictionary containing:
+        - center: Axis center point (x, y)
+        - direction: Unit direction vector (dx, dy) pointing from palm to tip
+        - length: Estimated finger length in pixels
+        - palm_end: Palm-side endpoint
+        - tip_end: Fingertip endpoint
+        - method: Method actually used ("landmarks" or "pca")
+    """
+    if method == "pca":
+        # Force PCA method
+        return _estimate_axis_pca(mask, landmarks)
+
+    elif method == "landmarks":
+        # Force landmark method (fail if landmarks invalid)
+        if landmarks is None or len(landmarks) != 4:
+            raise ValueError("Landmark method requested but landmarks not available")
+        return estimate_finger_axis_from_landmarks(landmarks, method=landmark_method)
+
+    elif method == "auto":
+        # Auto mode: try landmarks first, fall back to PCA
+        try:
+            # Check if landmarks are available and valid
+            if landmarks is not None and len(landmarks) == 4:
+                is_valid, reason = _validate_landmark_quality(landmarks)
+                if is_valid:
+                    # Use landmark-based method
+                    print(f"  Using landmark-based axis estimation ({landmark_method})")
+                    return estimate_finger_axis_from_landmarks(landmarks, method=landmark_method)
+                else:
+                    print(f"  Landmarks available but quality check failed: {reason}")
+                    print(f"  Falling back to PCA axis estimation")
+            else:
+                print(f"  Landmarks not available, using PCA axis estimation")
+
+        except Exception as e:
+            print(f"  Landmark-based axis estimation failed: {e}")
+            print(f"  Falling back to PCA axis estimation")
+
+        # Fall back to PCA
+        return _estimate_axis_pca(mask, landmarks)
+
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'auto', 'landmarks', or 'pca'")
 
 
 def localize_ring_zone(
@@ -145,6 +367,7 @@ def localize_ring_zone(
         - end_point: Zone end position (x, y)
         - center_point: Zone center position
         - length: Zone length in pixels
+        - localization_method: "percentage"
     """
     # Extract axis information
     palm_end = axis_data["palm_end"]
@@ -174,7 +397,78 @@ def localize_ring_zone(
         "length": float(zone_length),
         "start_pct": zone_start_pct,
         "end_pct": zone_end_pct,
+        "localization_method": "percentage",
     }
+
+
+def localize_ring_zone_from_landmarks(
+    landmarks: np.ndarray,
+    axis_data: Dict[str, Any],
+    zone_type: str = "percentage",
+    zone_start_pct: float = 0.15,
+    zone_end_pct: float = 0.25,
+) -> Dict[str, Any]:
+    """
+    Localize ring-wearing zone using anatomical landmarks.
+
+    v1 Enhancement: Provides anatomical-based ring zone localization
+    as an alternative to percentage-based approach.
+
+    Args:
+        landmarks: 4x2 array of finger landmarks [MCP, PIP, DIP, TIP]
+        axis_data: Output from estimate_finger_axis()
+        zone_type: Zone localization method
+            - "percentage": 15-25% from palm (v0 compatible, default)
+            - "anatomical": Centered on PIP joint with proportional width
+        zone_start_pct: Zone start percentage (percentage mode only)
+        zone_end_pct: Zone end percentage (percentage mode only)
+
+    Returns:
+        Dictionary containing:
+        - start_point: Zone start position (x, y)
+        - end_point: Zone end position (x, y)
+        - center_point: Zone center position
+        - length: Zone length in pixels
+        - localization_method: "percentage" or "anatomical"
+    """
+    if zone_type == "percentage":
+        # Use percentage-based method (v0 compatible)
+        result = localize_ring_zone(axis_data, zone_start_pct, zone_end_pct)
+        return result
+
+    elif zone_type == "anatomical":
+        # Anatomical mode: centered on PIP joint
+        # PIP joint (landmarks[1]) is a natural ring-wearing position
+        mcp = landmarks[0]
+        pip = landmarks[1]
+        dip = landmarks[2]
+
+        direction = axis_data["direction"]
+
+        # Center ring zone on PIP joint
+        zone_center = pip.copy()
+
+        # Calculate zone width as percentage of MCP-PIP distance
+        # This makes zone proportional to finger anatomy
+        mcp_pip_distance = np.linalg.norm(pip - mcp)
+        zone_half_width = mcp_pip_distance * 0.25  # 50% of MCP-PIP segment
+
+        # Calculate start and end points along axis
+        start_point = zone_center - direction * zone_half_width
+        end_point = zone_center + direction * zone_half_width
+
+        zone_length = zone_half_width * 2
+
+        return {
+            "start_point": start_point.astype(np.float32),
+            "end_point": end_point.astype(np.float32),
+            "center_point": zone_center.astype(np.float32),
+            "length": float(zone_length),
+            "localization_method": "anatomical",
+        }
+
+    else:
+        raise ValueError(f"Unknown zone_type: {zone_type}. Use 'percentage' or 'anatomical'")
 
 
 def compute_cross_section_width(

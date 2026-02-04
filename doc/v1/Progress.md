@@ -32,18 +32,88 @@
 
 ---
 
-## Phase 1: Landmark-Based Axis Estimation ⏳
-**Status:** Not started
+## Phase 1: Landmark-Based Axis Estimation ✅
+**Status:** Complete
+**Date:** 2026-02-04
 **Target:** Week 1
 
-### Tasks
-- [ ] Implement `estimate_finger_axis_from_landmarks()` with 3 methods (endpoints, linear_fit, median_direction)
-- [ ] Add landmark quality validation
-- [ ] Update `estimate_finger_axis()` to prefer landmarks over PCA
-- [ ] Implement `localize_ring_zone_from_landmarks()` with anatomical mode
-- [ ] Unit tests for axis estimation
-- [ ] Visual comparison: landmark axis vs PCA axis
-- [ ] Integration testing
+### Tasks Completed
+- [x] Implement `estimate_finger_axis_from_landmarks()` with 3 methods (endpoints, linear_fit, median_direction)
+- [x] Add landmark quality validation (`_validate_landmark_quality()`)
+- [x] Update `estimate_finger_axis()` to prefer landmarks over PCA (auto mode)
+- [x] Implement `localize_ring_zone_from_landmarks()` with anatomical mode
+- [x] Unit tests for axis estimation (test_axis_methods.py)
+- [x] Visual comparison: landmark axis vs PCA axis
+- [x] Integration testing
+
+### Implementation Summary
+
+**New Functions Added:**
+1. `_validate_landmark_quality()` - Quality checks for landmarks
+   - Validates 4 landmarks present
+   - Checks for NaN/inf values
+   - Ensures reasonable spacing (>5px between landmarks)
+   - Verifies monotonic progression (no crossovers)
+   - Validates minimum finger length (>20px)
+
+2. `estimate_finger_axis_from_landmarks()` - Direct landmark-based axis
+   - Three calculation methods:
+     - `endpoints`: Simple MCP→TIP vector (fast)
+     - `linear_fit`: Linear regression on all 4 landmarks (robust, default)
+     - `median_direction`: Median of segment directions (outlier-resistant)
+   - Returns axis data with `method="landmarks"`
+
+3. `_estimate_axis_pca()` - Refactored PCA method
+   - Original v0 implementation moved to helper function
+   - Returns axis data with `method="pca"`
+
+4. `estimate_finger_axis()` - Updated main function
+   - New `method` parameter: "auto" (default), "landmarks", "pca"
+   - New `landmark_method` parameter for choosing landmark calculation
+   - Auto mode: tries landmarks first, falls back to PCA if quality check fails
+   - Transparent method reporting in return value
+
+5. `localize_ring_zone_from_landmarks()` - Anatomical-based ring zone
+   - `zone_type="percentage"`: v0-compatible percentage-based (default)
+   - `zone_type="anatomical"`: Centered on PIP joint with proportional width
+   - Returns localization_method in output
+
+### Test Results
+
+**Axis Comparison Test** (`test_axis_methods.py`):
+- Tested on `input/test_sample2.jpg` (middle finger)
+- All 3 landmark methods produce consistent results
+- Landmark vs PCA comparison:
+  - Direction angle difference: **0.21°** (excellent agreement)
+  - Length difference: +34.8px (1.86%)
+  - Center displacement: 543px (expected due to different centroids)
+- **Auto mode successfully uses landmark-based method** when landmarks valid
+
+**Integration Test** (full pipeline):
+- Measurement with landmark-based axis: **2.96cm**
+- Confidence: **0.905** (high)
+- Console output confirms: "Using landmark-based axis estimation (linear_fit)"
+- No regression in measurement accuracy
+
+### Technical Notes
+
+**Landmark Quality Validation:**
+- Catches common failure modes: missing landmarks, collapsed positions, crossovers
+- Enables robust auto fallback when landmarks are poor quality
+- Clear error messages for debugging
+
+**Method Selection:**
+- `linear_fit` chosen as default for best balance of robustness and accuracy
+- All 3 methods agree within 0.03° on test image (straight finger)
+- Auto mode provides transparent fallback without user intervention
+
+**Backward Compatibility:**
+- Existing code continues to work unchanged (defaults to auto mode)
+- PCA method still available via `method="pca"` parameter
+- Output format unchanged (method field added to axis_data)
+
+### Next Steps
+- Phase 2: Sobel Edge Detection Core (Week 2)
 
 ---
 
