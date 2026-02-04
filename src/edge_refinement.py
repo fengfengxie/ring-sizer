@@ -303,11 +303,10 @@ def detect_edges_per_row(
     h, w = gradient_magnitude.shape
     
     # Calculate realistic finger width range in pixels
-    # Typical finger widths: 14mm (very thin, size 3) to 25mm (very thick, size 15+)
-    # Most common: 16.5mm (size 6) to 22.5mm (size 13)
-    # Using wider range to avoid false rejections
-    min_finger_width_cm = 1.4
-    max_finger_width_cm = 2.8
+    # Typical adult finger widths: 16mm (size 6) to 23mm (size 13)
+    # This is tighter than before (was 14-28mm) for better accuracy
+    min_finger_width_cm = 1.6
+    max_finger_width_cm = 2.3
     
     min_width_px = None
     max_width_px = None
@@ -316,103 +315,82 @@ def detect_edges_per_row(
         max_width_px = max_finger_width_cm * scale_px_per_cm
         print(f"  [DEBUG] Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px ({min_finger_width_cm}-{max_finger_width_cm}cm)")
     elif expected_width_px is not None:
-        # Use expected width with ±30% tolerance
-        min_width_px = expected_width_px * 0.7
-        max_width_px = expected_width_px * 1.3
-        print(f"  [DEBUG] Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px (±30% of expected)")
+        # Use expected width with ±25% tolerance
+        min_width_px = expected_width_px * 0.75
+        max_width_px = expected_width_px * 1.25
+        print(f"  [DEBUG] Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px (±25% of expected)")
     else:
         print(f"  [DEBUG] No width constraint (scale and expected width both None)")
     
-    # Get axis information for left/right determination and symmetry checking
+    # Get axis information - this is our strong anchor point (INSIDE the finger)
     axis_center = roi_data.get("axis_center_in_roi")
     axis_direction = roi_data.get("axis_direction_in_roi")
     zone_start = roi_data.get("zone_start_in_roi")
     zone_end = roi_data.get("zone_end_in_roi")
     
-    def score_edge_pair(left_x, right_x, left_strength, right_strength, row_y):
+    def find_edges_from_axis(row_gradient, row_y, axis_x):
         """
-        Score an edge pair based on width constraint, symmetry, and gradient strength.
+        Find left and right edges by expanding from axis position.
         
-        Returns: score (higher is better), or None if invalid
+        Strategy (AXIS-EXPANSION):
+        1. Start at axis x-coordinate (we KNOW this is inside the finger)
+        2. Search LEFT from axis: find closest salient edge (gradient > threshold)
+        3. Search RIGHT from axis: find closest salient edge (gradient > threshold)
+        4. Validate width is within realistic range (16-23mm)
+        
+        This is more robust than symmetry scoring because:
+        - MediaPipe axis may not be perfectly centered
+        - We use axis as strong anchor (guaranteed to be INSIDE finger)
+        - Find nearest edges outward (most reliable skin boundaries)
+        
+        Returns: (left_x, right_x, left_strength, right_strength) or None if invalid
         """
-        width = right_x - left_x
+        if axis_x < 0 or axis_x >= len(row_gradient):
+            return None
         
-        # Hard constraint: width must be in realistic range
+        # Search LEFT from axis (go leftward)
+        left_edge_x = None
+        left_strength = 0
+        for x in range(int(axis_x), -1, -1):
+            if row_gradient[x] > threshold:
+                # Found a salient edge - this is our left boundary
+                left_edge_x = x
+                left_strength = row_gradient[x]
+                break
+        
+        # Search RIGHT from axis (go rightward)
+        right_edge_x = None
+        right_strength = 0
+        for x in range(int(axis_x), len(row_gradient)):
+            if row_gradient[x] > threshold:
+                # Found a salient edge - this is our right boundary
+                right_edge_x = x
+                right_strength = row_gradient[x]
+                break
+        
+        if left_edge_x is None or right_edge_x is None:
+            return None
+        
+        # Validate width is within realistic finger range
+        width = right_edge_x - left_edge_x
         if min_width_px is not None and max_width_px is not None:
             if width < min_width_px or width > max_width_px:
-                return None  # Invalid
+                return None  # Width out of realistic range
         
-        # Calculate axis x-coordinate at this row
-        if axis_center is not None and axis_direction is not None:
-            if abs(axis_direction[1]) < 1e-6:
-                axis_x = axis_center[0]
-            else:
-                t = (row_y - axis_center[1]) / axis_direction[1]
-                axis_x = axis_center[0] + t * axis_direction[0]
-            
-            # Calculate distances from axis
-            left_dist = abs(axis_x - left_x)
-            right_dist = abs(right_x - axis_x)
-            
-            # Symmetry score: edges should be roughly equidistant from axis
-            # Perfect symmetry = 1.0, asymmetric = 0.0
-            if left_dist > 0 and right_dist > 0:
-                symmetry_ratio = min(left_dist, right_dist) / max(left_dist, right_dist)
-            else:
-                symmetry_ratio = 0.0
-        else:
-            # Fallback: assume symmetry if no axis info
-            symmetry_ratio = 1.0
-        
-        # Gradient strength score: prefer stronger edges
-        # Normalize by threshold so score is in [0, 1+] range
-        strength_score = (left_strength + right_strength) / (2 * threshold)
-        strength_score = min(strength_score, 2.0) / 2.0  # Cap at 2x threshold, normalize to [0, 1]
-        
-        # Width constraint score: prefer widths closer to typical range center
-        if min_width_px is not None and max_width_px is not None:
-            ideal_width = (min_width_px + max_width_px) / 2
-            width_deviation = abs(width - ideal_width) / ideal_width
-            width_score = max(0, 1.0 - width_deviation)  # 1.0 at ideal, 0.0 at edges
-        else:
-            width_score = 1.0
-        
-        # Combined score: weighted average
-        # Symmetry is most important (50%), then strength (30%), then width preference (20%)
-        score = 0.5 * symmetry_ratio + 0.3 * strength_score + 0.2 * width_score
-        
-        return score
+        return (left_edge_x, right_edge_x, left_strength, right_strength)
     
-    # Helper function: determine which side of axis a point is on
-    def which_side_of_axis(point_x, point_y):
-        """
-        Determine if point is left or right of finger axis.
-        Returns: -1 for left, +1 for right, 0 on axis
-        
-        After rotation normalization, finger is vertical, so we can simply
-        compare x-coordinate to axis x-coordinate at this row.
-        """
+    def get_axis_x(row_y):
+        """Get axis x-coordinate at given row."""
         if axis_center is None or axis_direction is None:
-            # Fallback to simple center-based logic
-            return -1 if point_x < w / 2 else 1
+            return w / 2  # Fallback to center
         
-        # Find x-coordinate of axis at current row
         if abs(axis_direction[1]) < 1e-6:
-            # Nearly horizontal axis (shouldn't happen with upright hand)
-            axis_x_at_row = axis_center[0]
+            # Nearly horizontal axis
+            return axis_center[0]
         else:
             # Parametric line: P = axis_center + t * axis_direction
-            # At row y: axis_center[1] + t * axis_direction[1] = point_y
-            t = (point_y - axis_center[1]) / axis_direction[1]
-            axis_x_at_row = axis_center[0] + t * axis_direction[0]
-        
-        # Simple comparison: left side has smaller x, right side has larger x
-        if point_x < axis_x_at_row - 1:  # -1 for numerical tolerance
-            return -1  # Left side
-        elif point_x > axis_x_at_row + 1:  # +1 for numerical tolerance
-            return 1   # Right side
-        else:
-            return 0   # On axis
+            t = (row_y - axis_center[1]) / axis_direction[1]
+            return axis_center[0] + t * axis_direction[0]
 
     # For horizontal filter orientation (detecting left/right edges)
     # Process each row to find left and right edges
@@ -425,138 +403,20 @@ def detect_edges_per_row(
         valid_rows = np.zeros(num_rows, dtype=bool)
 
         for row in range(num_rows):
-            # Use mask to define search region if available
-            # Then find strongest gradients near mask boundaries
+            # NEW APPROACH: Axis-expansion method
+            # Get axis position (our anchor point INSIDE the finger)
+            axis_x = get_axis_x(row)
+            
+            # Get gradient for this row
             row_gradient = gradient_magnitude[row, :]
             
-            # Get mask boundaries if available to constrain search region
-            roi_mask = roi_data.get("roi_mask")
-            if roi_mask is not None and np.any(roi_mask[row, :] > 0):
-                # Mask available: use it to define search region
-                row_mask = roi_mask[row, :]
-                mask_pixels = np.where(row_mask > 0)[0]
-
-                if len(mask_pixels) < 10:  # Need reasonable finger width
-                    continue
-
-                # Mask boundaries
-                mask_left = mask_pixels[0]
-                mask_right = mask_pixels[-1]
-
-                # Search for strongest gradient NEAR mask boundary (±50px)
-                search_radius = 50
-                left_search_start = max(0, mask_left - search_radius)
-                left_search_end = min(w, mask_left + search_radius)
-                right_search_start = max(0, mask_right - search_radius)
-                right_search_end = min(w, mask_right + search_radius)
-                
-                # Find candidates above threshold
-                left_candidates = []
-                for x in range(left_search_start, left_search_end):
-                    if row_gradient[x] > threshold:
-                        side = which_side_of_axis(x, row)
-                        if side <= 0:  # Must be on left side of axis
-                            left_candidates.append((x, row_gradient[x]))
-                
-                right_candidates = []
-                for x in range(right_search_start, right_search_end):
-                    if row_gradient[x] > threshold:
-                        side = which_side_of_axis(x, row)
-                        if side >= 0:  # Must be on right side of axis
-                            right_candidates.append((x, row_gradient[x]))
-                
-                if len(left_candidates) == 0 or len(right_candidates) == 0:
-                    continue
-                
-                # NEW: Evaluate all left-right combinations and select best
-                # Consider top N candidates from each side (N=5 or all if fewer)
-                max_candidates = 5
-                left_top = left_candidates[:max_candidates]
-                right_top = right_candidates[:max_candidates]
-                
-                best_score = -1
-                best_left = None
-                best_right = None
-                best_left_strength = 0
-                best_right_strength = 0
-                
-                for left_x, left_str in left_top:
-                    for right_x, right_str in right_top:
-                        score = score_edge_pair(left_x, right_x, left_str, right_str, row)
-                        if score is not None and score > best_score:
-                            best_score = score
-                            best_left = left_x
-                            best_right = right_x
-                            best_left_strength = left_str
-                            best_right_strength = right_str
-                
-                if best_left is None or best_right is None:
-                    continue  # No valid pair found
-                
-                left_edge_x = best_left
-                left_strength = best_left_strength
-                right_edge_x = best_right
-                right_strength = best_right_strength
-                
-            else:
-                # No mask: search entire row with axis constraint
-                strong_edges = np.where(row_gradient > threshold)[0]
-
-                if len(strong_edges) < 2:
-                    continue
-
-                # Separate by axis side
-                left_candidates = []
-                right_candidates = []
-                
-                for edge_x in strong_edges:
-                    side = which_side_of_axis(edge_x, row)
-                    strength = row_gradient[edge_x]
-                    if side < 0:  # Left side
-                        left_candidates.append((edge_x, strength))
-                    elif side > 0:  # Right side
-                        right_candidates.append((edge_x, strength))
-
-                if len(left_candidates) == 0 or len(right_candidates) == 0:
-                    continue
-
-                # NEW: Evaluate all left-right combinations and select best
-                max_candidates = 5
-                left_top = sorted(left_candidates, key=lambda x: x[1], reverse=True)[:max_candidates]
-                right_top = sorted(right_candidates, key=lambda x: x[1], reverse=True)[:max_candidates]
-                
-                best_score = -1
-                best_left = None
-                best_right = None
-                best_left_strength = 0
-                best_right_strength = 0
-                
-                for left_x, left_str in left_top:
-                    for right_x, right_str in right_top:
-                        score = score_edge_pair(left_x, right_x, left_str, right_str, row)
-                        if score is not None and score > best_score:
-                            best_score = score
-                            best_left = left_x
-                            best_right = right_x
-                            best_left_strength = left_str
-                            best_right_strength = right_str
-                
-                if best_left is None or best_right is None:
-                    continue  # No valid pair found
-                
-                left_edge_x = best_left
-                left_strength = best_left_strength
-                right_edge_x = best_right
-                right_strength = best_right_strength
-
-
-            # Calculate width
-            width = right_edge_x - left_edge_x
-
-            # Validate width if expected width provided
-            if expected_width_px is not None:
-                if width < expected_width_px * 0.5 or width > expected_width_px * 1.5:
-                    continue
+            # Find edges by expanding from axis
+            result = find_edges_from_axis(row_gradient, row, axis_x)
+            
+            if result is None:
+                continue  # No valid edges found
+            
+            left_edge_x, right_edge_x, left_strength, right_strength = result
 
             # Mark as valid
             left_edges[row] = float(left_edge_x)
