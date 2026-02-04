@@ -757,11 +757,19 @@ ls -lh output/edge_refinement_debug/
 
 ---
 
-## Phase 6: Validation & Documentation ⏳
-**Status:** Not started
+## Phase 6: Validation & Documentation 🔄
+**Status:** Documentation complete, validation deferred
+**Date:** 2026-02-04
 **Target:** Week 5
 
-### Tasks
+### Documentation Tasks Completed ✅
+- [x] Update README.md with v1 features (comprehensive)
+- [x] Update CLAUDE.md with v1 implementation notes (v1 architecture section)
+- [x] Create `doc/algorithms/05-landmark-axis.md` (comprehensive, 340 lines)
+- [x] Create `doc/algorithms/07b-sobel-edge-refinement.md` (comprehensive, 630 lines)
+- [x] Update `doc/algorithms/README.md` (v0/v1 pipelines, tables, reading guide)
+
+### Validation Tasks Deferred ⏳
 - [ ] Collect ground truth dataset (20+ images with caliper measurements)
 - [ ] Create `script/validate_accuracy.py`
 - [ ] Create `script/test_robustness.py`
@@ -769,12 +777,69 @@ ls -lh output/edge_refinement_debug/
 - [ ] Run accuracy validation (target: MAE <0.3mm)
 - [ ] Run robustness testing (target: >90% success rate)
 - [ ] Run performance benchmarks (target: <1.5s per image)
-- [ ] Update README.md with v1 features
-- [ ] Update CLAUDE.md with v1 implementation notes
-- [ ] Create `doc/v1/algorithms/05-landmark-axis.md`
-- [ ] Create `doc/v1/algorithms/07b-sobel-edge-refinement.md`
-- [ ] Update `doc/algorithms/README.md`
 - [ ] Final code review and cleanup
+
+### Documentation Summary
+
+**README.md Updates:**
+- Added v1 edge refinement to key features section
+- Expanded usage examples with all edge method flags (contour, sobel, compare, auto)
+- Enhanced output format with v1 JSON fields (edge_method_used, contour/sobel specific fields)
+- Added method comparison output example showing side-by-side results
+- Updated debug visualization section with 3 debug directories (including edge_refinement_debug)
+- Updated architecture diagram showing v1 dual-pipeline with auto-fallback
+- Added edge_refinement.py to module structure table
+- Expanded technical details with edge detection methods comparison table
+- Updated confidence scoring comparison (v0 3-component vs v1 4-component)
+- Added v1 CLI options table with 4 new flags
+- Updated development status with v1 phases breakdown
+
+**CLAUDE.md Updates:**
+- Added doc/v1/ references to reboot workflow
+- Updated project overview with dual edge detection mention
+- Expanded command examples with v1 flags
+- Added comprehensive v1 architecture section (125 lines):
+  - What's new in v1 (5 key improvements)
+  - Enhanced processing pipeline (Phase 5a, 7b, 8b)
+  - Detailed Sobel edge refinement pipeline (5 steps)
+  - v1 module structure table
+  - v1 CLI flags reference
+  - Auto mode behavior algorithm (4 validation checks)
+  - v1 debug output structure (12 images)
+  - Additional v1 failure modes
+
+**Algorithm Documentation Created:**
+
+1. **05-landmark-axis.md** (340 lines)
+   - Overview of landmark-based axis vs PCA
+   - Stage 1: Landmark quality validation (4 checks)
+   - Stage 2: 3 calculation methods (endpoints, linear_fit, median_direction)
+   - Stage 3: Fallback to PCA
+   - Quality comparison table (landmark vs PCA)
+   - Usage examples, debug visualization, performance metrics
+   - Related functions, future improvements
+
+2. **07b-sobel-edge-refinement.md** (630 lines)
+   - Overview of Sobel vs contour edge detection
+   - Stage 1: ROI extraction with padding
+   - Stage 2: Sobel gradient computation (bidirectional)
+   - Stage 3: Edge detection per cross-section (mask-constrained + gradient-only)
+   - Stage 4: Sub-pixel refinement (parabola fitting, mathematical derivation)
+   - Stage 5: Width measurement (MAD outlier filtering)
+   - Stage 6: Edge quality scoring (4 components)
+   - Auto mode decision logic (4 validation checks)
+   - Debug visualization (12 images in 3 stages)
+   - Performance metrics, comparison table, usage examples
+   - Failure modes, future improvements, related functions
+
+**Algorithm Index Updates (README.md):**
+- Updated Phase 5 with v0 (PCA) and v1 (landmark) sections
+- Updated Phase 7 with v0 (contour) and v1 (Sobel) sections
+- Updated Phase 8 with v0 (3-component) and v1 (4-component) sections
+- Added dual pipeline diagrams (v0 and v1 with auto-fallback flowchart)
+- Split quick reference table into v0 and v1 sections
+- Enhanced reading guide with v0/v1 paths
+- Updated last modified date and version (2.0)
 
 ---
 

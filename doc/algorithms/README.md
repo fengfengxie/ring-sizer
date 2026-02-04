@@ -6,6 +6,7 @@ Detailed technical documentation for all algorithms in the Ring Sizer measuremen
 
 ## 📋 Processing Pipeline Overview
 
+### v0 Pipeline (Contour-Based)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Input Image (RGB)                         │
@@ -28,7 +29,7 @@ Detailed technical documentation for all algorithms in the Ring Sizer measuremen
         └──────────────┬──────────────┘
                        │
         ┌──────────────┴──────────────┐
-        │  5. Finger Axis Estimation  │ ← PCA analysis
+        │  5. Finger Axis (PCA)       │ ← Principal component
         └──────────────┬──────────────┘
                        │
         ┌──────────────┴──────────────┐
@@ -36,11 +37,11 @@ Detailed technical documentation for all algorithms in the Ring Sizer measuremen
         └──────────────┬──────────────┘
                        │
         ┌──────────────┴──────────────┐
-        │  7. Width Measurement       │ ← Cross-section sampling
+        │  7. Width Measurement       │ ← Contour intersection
         └──────────────┬──────────────┘
                        │
         ┌──────────────┴──────────────┐
-        │  8. Confidence Scoring      │ ← Multi-factor analysis
+        │  8. Confidence Scoring      │ ← 3-component (30/30/40)
         └──────────────┬──────────────┘
                        │
         ┌──────────────┴──────────────┐
@@ -52,6 +53,71 @@ Detailed technical documentation for all algorithms in the Ring Sizer measuremen
             │   Debug Image       │
             └─────────────────────┘
 ```
+
+### v1 Pipeline (Sobel-Based, with Auto-Fallback)
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Input Image (RGB)                         │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │  1-3. Quality, Card, Scale  │ ← Same as v0
+        └──────────────┬──────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │  4. Hand & Finger Segment   │ ← MediaPipe landmarks
+        └──────────────┬──────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │  5a. Axis (Landmarks)  ✨   │ ← MCP→PIP→DIP→TIP
+        │      (fallback: PCA)        │
+        └──────────────┬──────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │  6. Ring Zone Localization  │ ← 15-25% from palm
+        └──────────────┬──────────────┘
+                       │
+        ┌──────────────┴──────────────────────┐
+        │      7. Width Measurement            │
+        │   ┌──────────┴──────────┐           │
+        │   │   7a. Contour        │ ← v0     │
+        │   │   (always computed)  │           │
+        │   └──────────┬───────────┘           │
+        │              │                        │
+        │   ┌──────────┴───────────┐           │
+        │   │   7b. Sobel  ✨      │ ← v1     │
+        │   │   (sub-pixel edges)  │           │
+        │   └──────────┬───────────┘           │
+        │              │                        │
+        │   ┌──────────┴───────────┐           │
+        │   │  Quality Check       │           │
+        │   │  (threshold: 0.7)    │           │
+        │   └──────────┬───────────┘           │
+        │              │                        │
+        │   ┌──────────┴───────────┐           │
+        │   │  Select Best Method  │           │
+        │   │  (Sobel or Contour)  │           │
+        │   └──────────┬───────────┘           │
+        └──────────────┬──────────────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │  8b. Enhanced Confidence    │ ← 4-component (25/25/20/30)
+        └──────────────┬──────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │  9. Debug Visualization     │ ← 13 debug images
+        └──────────────┬──────────────┘
+                       │
+            ┌──────────┴──────────┐
+            │   JSON Output +     │
+            │   Debug Images      │
+            └─────────────────────┘
+```
+
+**Legend:**
+- ✨ = v1 Enhancement
+- v0 = Original contour-based method
+- v1 = New Sobel-based method with auto-fallback
 
 ---
 
@@ -127,7 +193,7 @@ Dual-method approach for finger isolation:
 ---
 
 ### Phase 5: Finger Axis Estimation
-**Status:** 🔜 To be documented
+**Status:** 🔜 To be documented (v0 PCA method)
 **Module:** `src/geometry.py` (estimate_finger_axis)
 
 - Principal Component Analysis (PCA)
@@ -137,6 +203,25 @@ Dual-method approach for finger isolation:
 - Center point determination
 
 **Document:** `05-axis-estimation.md` (coming soon)
+
+---
+
+### Phase 5a: Landmark-Based Finger Axis (v1) ✅
+**Status:** ✅ **Documented**
+**Module:** `src/geometry.py` (estimate_finger_axis_from_landmarks)
+**Version:** v1
+
+Enhanced axis estimation using MediaPipe finger landmarks:
+1. **3 Calculation Methods:**
+   - Endpoints: Simple MCP→TIP vector
+   - Linear Fit: Regression on 4 landmarks (default)
+   - Median Direction: Robust to outliers
+2. **Quality Validation:** NaN checks, spacing, monotonic progression
+3. **Auto-Fallback:** Falls back to PCA if landmarks fail
+
+**Accuracy:** More anatomically consistent than PCA
+
+**Document:** **[05-landmark-axis.md](05-landmark-axis.md)** ✅
 
 ---
 
@@ -154,7 +239,7 @@ Dual-method approach for finger isolation:
 ---
 
 ### Phase 7: Width Measurement
-**Status:** 🔜 To be documented
+**Status:** 🔜 To be documented (v0 contour method)
 **Module:** `src/geometry.py` (compute_cross_section_width)
 
 - 20 perpendicular cross-sections
@@ -167,11 +252,30 @@ Dual-method approach for finger isolation:
 
 ---
 
+### Phase 7b: Sobel Edge Refinement (v1) ✅
+**Status:** ✅ **Documented**
+**Module:** `src/edge_refinement.py` (refine_edges_sobel)
+**Version:** v1
+
+Gradient-based edge detection with sub-pixel precision:
+1. **ROI Extraction:** Localized region around ring zone
+2. **Sobel Filtering:** Bidirectional gradients (L→R, R→L)
+3. **Edge Detection:** Mask-constrained gradient peak search
+4. **Sub-Pixel Refinement:** Parabola fitting (<0.5px precision)
+5. **Quality Scoring:** 4 metrics (strength, consistency, smoothness, symmetry)
+
+**Precision:** <0.5px (~0.001-0.003cm at 185 px/cm)
+**Auto-Fallback:** Falls back to contour if edge quality <0.7
+
+**Document:** **[07b-sobel-edge-refinement.md](07b-sobel-edge-refinement.md)** ✅
+
+---
+
 ### Phase 8: Confidence Scoring
-**Status:** 🔜 To be documented
+**Status:** 🔜 To be documented (v0 3-component)
 **Module:** `src/confidence.py`
 
-Multi-factor confidence assessment:
+Multi-factor confidence assessment (v0):
 - **Card confidence** (30%): Detection quality, scale accuracy
 - **Finger confidence** (30%): Landmark quality, mask validity
 - **Measurement confidence** (40%): Width variance, outlier ratio
@@ -179,6 +283,23 @@ Multi-factor confidence assessment:
 **Overall score:** Weighted average → HIGH/MEDIUM/LOW classification
 
 **Document:** `08-confidence-scoring.md` (coming soon)
+
+---
+
+### Phase 8b: Enhanced Confidence Scoring (v1)
+**Status:** 🔜 To be documented
+**Module:** `src/confidence.py` (compute_edge_quality_confidence)
+**Version:** v1
+
+Enhanced confidence with edge quality component (v1):
+- **Card confidence** (25%): Detection quality, scale accuracy
+- **Finger confidence** (25%): Landmark quality, mask validity
+- **Edge quality** (20%): Gradient strength, consistency, smoothness, symmetry
+- **Measurement confidence** (30%): Width variance, outlier ratio
+
+**Overall score:** Weighted average → HIGH/MEDIUM/LOW classification
+
+**Document:** `08b-enhanced-confidence.md` (coming soon)
 
 ---
 
@@ -200,20 +321,34 @@ Multi-factor confidence assessment:
 
 ## 🔍 Quick Reference Table
 
+### v0 Pipeline (Contour-Based)
+
 | Phase | Algorithm | Input | Output | Complexity |
 |-------|-----------|-------|--------|------------|
 | 1 | Image Quality | RGB Image | Quality Flags | O(n) |
 | 2 | **Card Detection** ✅ | RGB Image | Corners, Confidence | O(n²) |
 | 3 | Scale Calibration | Card Corners | px_per_cm | O(1) |
 | 4 | **Finger Segment** ✅ | RGB Image | Mask, Landmarks | O(n) |
-| 5 | Axis Estimation | Finger Mask | Axis, Center | O(n) |
+| 5 | Axis Estimation (PCA) | Finger Mask | Axis, Center | O(n) |
 | 6 | Zone Localization | Axis, Length | Zone Bounds | O(1) |
-| 7 | Width Measurement | Zone, Scale | Width (cm) | O(n) |
-| 8 | Confidence Scoring | All Phases | Confidence | O(1) |
+| 7 | Width Measurement (Contour) | Zone, Scale | Width (cm) | O(n) |
+| 8 | Confidence Scoring (3-comp) | All Phases | Confidence | O(1) |
 | 9 | Visualization | All Results | Debug PNG | O(n) |
 
-**Legend:**
+### v1 Pipeline (Sobel-Based)
+
+| Phase | Algorithm | Input | Output | Complexity |
+|-------|-----------|-------|--------|------------|
+| 1-4 | (Same as v0) | | | |
+| 5a | **Axis (Landmarks)** ✅ | MediaPipe Landmarks | Axis, Endpoints | O(1) |
+| 6 | Zone Localization | Axis, Length | Zone Bounds | O(1) |
+| 7b | **Sobel Edge Refinement** ✅ | Zone ROI, Mask | Width (cm), Quality | O(n·m) |
+| 8b | Enhanced Confidence (4-comp) | All Phases + Edge | Confidence | O(1) |
+| 9 | Visualization (Enhanced) | All Results | 13 Debug PNGs | O(n) |
+
+**Notes:**
 - n = number of pixels in image
+- m = number of cross-sections in zone (~20-100)
 - ✅ = Documented
 - 🔜 = To be documented
 
@@ -222,22 +357,31 @@ Multi-factor confidence assessment:
 ## 📖 Reading Guide
 
 ### For Algorithm Understanding
-Read in sequential order:
+**v0 (Contour-Based):** Read in sequential order:
 1. Start with [02-card-detection.md](02-card-detection.md)
-2. Continue with scale calibration (when available)
-3. Follow the pipeline order above
+2. Continue with [04-finger-segmentation.md](04-finger-segmentation.md)
+3. Follow phases 5-9 (when available)
+
+**v1 (Sobel-Based):** After understanding v0:
+1. Read [05-landmark-axis.md](05-landmark-axis.md) - Enhanced axis estimation
+2. Read [07b-sobel-edge-refinement.md](07b-sobel-edge-refinement.md) - Sub-pixel edges
+3. Understand auto-fallback logic and quality scoring
 
 ### For Implementation
 Focus on specific modules:
 - **Detection:** 01, 02, 03
-- **Segmentation:** 04, 05
-- **Measurement:** 06, 07
-- **Analysis:** 08, 09
+- **Segmentation:** 04, 05, 05a
+- **Measurement (v0):** 06, 07
+- **Measurement (v1):** 06, 05a, 07b
+- **Analysis:** 08, 08b, 09
 
 ### For Debugging
 - **Card not detected:** See [02-card-detection.md](02-card-detection.md) - Strategy comparison
-- **Poor measurements:** See 07-width-measurement.md (when available)
-- **Low confidence:** See 08-confidence-scoring.md (when available)
+- **Hand/finger not detected:** See [04-finger-segmentation.md](04-finger-segmentation.md) - Multi-rotation
+- **Axis estimation failed:** See [05-landmark-axis.md](05-landmark-axis.md) - Quality validation
+- **Edge refinement failed:** See [07b-sobel-edge-refinement.md](07b-sobel-edge-refinement.md) - Quality scoring
+- **Poor measurements:** Compare v0 contour vs v1 Sobel methods
+- **Low confidence:** See 08-confidence-scoring.md / 08b-enhanced-confidence.md (when available)
 
 ---
 
@@ -277,5 +421,5 @@ When documenting a new algorithm:
 
 ---
 
-**Last Updated:** 2026-02-03
-**Documentation Version:** 1.0
+**Last Updated:** 2026-02-03 (v1 documentation added)
+**Documentation Version:** 2.0 (v0 + v1)
