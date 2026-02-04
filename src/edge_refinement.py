@@ -216,11 +216,13 @@ def apply_sobel_filters(
 
     # Determine filter orientation
     if axis_direction == "auto":
-        # If ROI is wider than tall, finger is likely horizontal
-        if w > h:
-            filter_orientation = "vertical"  # Detect top/bottom edges
-        else:
-            filter_orientation = "horizontal"  # Detect left/right edges
+        # After rotation normalization, finger is always vertical (upright)
+        # Finger runs vertically → detect left/right edges → use horizontal filter
+        # 
+        # NOTE: ROI aspect ratio is NOT reliable after rotation normalization!
+        # The ROI may be wider than tall even when finger is vertical.
+        # Always use horizontal filter orientation for upright hands.
+        filter_orientation = "horizontal"  # Detect left/right edges for vertical finger
     elif axis_direction == "vertical":
         filter_orientation = "horizontal"
     elif axis_direction == "horizontal":
@@ -706,6 +708,10 @@ def measure_width_from_edges(
 
     # Convert to cm
     median_width_cm = median_width_px / scale_px_per_cm
+    
+    # DEBUG: Print raw measurements
+    print(f"  [DEBUG] Raw median width: {median_width_px:.2f}px, scale: {scale_px_per_cm:.2f} px/cm → {median_width_cm:.4f}cm")
+    print(f"  [DEBUG] Width range: {np.min(widths_filtered):.1f}-{np.max(widths_filtered):.1f}px, std: {std_width_px:.1f}px")
 
     return {
         "widths_px": widths_filtered.tolist(),
@@ -972,6 +978,9 @@ def refine_edges_sobel(
         padding=50, rotate_align=rotate_align
     )
     
+    print(f"  [DEBUG] ROI size: {roi_data['roi_width']}x{roi_data['roi_height']}px")
+    print(f"  [DEBUG] ROI bounds: {roi_data['roi_bounds']}")
+    
     if debug_dir:
         # A.2: Ring zone + ROI bounds
         roi_bounds = roi_data["roi_bounds"]
@@ -1007,6 +1016,15 @@ def refine_edges_sobel(
         threshold=sobel_threshold,
         expected_width_px=expected_width_px
     )
+    
+    print(f"  [DEBUG] Valid rows: {edge_data['num_valid_rows']}/{len(edge_data['valid_rows'])} ({edge_data['num_valid_rows']/len(edge_data['valid_rows'])*100:.1f}%)")
+    if edge_data['num_valid_rows'] > 0:
+        valid_left = edge_data['left_edges'][edge_data['valid_rows']]
+        valid_right = edge_data['right_edges'][edge_data['valid_rows']]
+        print(f"  [DEBUG] Left edges range: {np.min(valid_left):.1f}-{np.max(valid_left):.1f}px")
+        print(f"  [DEBUG] Right edges range: {np.min(valid_right):.1f}-{np.max(valid_right):.1f}px")
+        widths = valid_right - valid_left
+        print(f"  [DEBUG] Raw widths range: {np.min(widths):.1f}-{np.max(widths):.1f}px, median: {np.median(widths):.1f}px")
     
     if debug_dir:
         # B.4: Edge candidates
