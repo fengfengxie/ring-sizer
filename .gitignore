@@ -14,6 +14,7 @@ ENV/
 *.swo
 
 # Project outputs (keep structure, ignore contents)
+output/
 output/*.json
 output/*.png
 output/*.jpg
@@ -26,6 +27,7 @@ output/edge_refinement_debug/
 model/*.task
 
 # Test artifacts
+input/
 input/test*.jpg
 input/*.heic
 
