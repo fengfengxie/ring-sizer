@@ -14,6 +14,7 @@ Ring Sizer is a **local, terminal-executable computer vision program** that prec
 - 🎯 **Single Image Input**: No need for multiple photos or complex setups
 - 💳 **Credit Card Calibration**: Uses standard credit card (ISO/IEC 7810 ID-1) for scale reference
 - 🤖 **AI-Powered Detection**: MediaPipe-based hand and finger segmentation
+- 🔬 **Dual Edge Detection** (v1): Landmark-based axis + Sobel gradient refinement for improved accuracy
 - 📊 **Comprehensive Confidence Scoring**: Multi-factor quality assessment
 - 🎨 **Debug Visualization**: Detailed overlay images for quality verification
 - ⚡ **Fast & Local**: No cloud processing, runs entirely on your machine
@@ -67,7 +68,7 @@ For quick testing without typing long commands:
 
 ## 📋 Usage Examples
 
-### Measure with default settings
+### Basic measurement (auto mode)
 ```bash
 python measure_finger.py --input image.jpg --output result.json
 ```
@@ -80,13 +81,33 @@ python measure_finger.py \
   --debug debug_output.png
 ```
 
-### Specify finger and confidence threshold
+### Use Sobel edge refinement (v1)
+```bash
+python measure_finger.py \
+  --input image.jpg \
+  --output result.json \
+  --edge-method sobel \
+  --debug debug_output.png
+```
+
+### Compare edge detection methods
+```bash
+python measure_finger.py \
+  --input image.jpg \
+  --output result.json \
+  --edge-method compare \
+  --debug debug_output.png
+```
+
+### Specify finger and adjust Sobel parameters
 ```bash
 python measure_finger.py \
   --input image.jpg \
   --output result.json \
   --finger-index ring \
-  --confidence-threshold 0.8
+  --edge-method sobel \
+  --sobel-threshold 15.0 \
+  --sobel-kernel-size 3
 ```
 
 ### Save intermediate processing artifacts
@@ -111,7 +132,7 @@ For optimal results, ensure your input image meets these criteria:
 
 ## 📤 Output Format
 
-### JSON Output
+### JSON Output (v0)
 ```json
 {
   "finger_outer_diameter_cm": 1.78,
@@ -126,9 +147,62 @@ For optimal results, ensure your input image meets these criteria:
 }
 ```
 
+### JSON Output with v1 Edge Method Info
+```json
+{
+  "finger_outer_diameter_cm": 1.78,
+  "confidence": 0.89,
+  "edge_method_used": "sobel",
+  "scale_px_per_cm": 42.3,
+  "quality_flags": {
+    "card_detected": true,
+    "finger_detected": true,
+    "view_angle_ok": true,
+    "edge_quality_ok": true
+  },
+  "fail_reason": null
+}
+```
+
+### JSON Output with Method Comparison
+```json
+{
+  "finger_outer_diameter_cm": 1.78,
+  "confidence": 0.87,
+  "edge_method_used": "compare",
+  "method_comparison": {
+    "contour": {
+      "width_cm": 1.82,
+      "confidence": 0.86
+    },
+    "sobel": {
+      "width_cm": 1.78,
+      "edge_quality_score": 0.89,
+      "confidence": 0.87
+    },
+    "difference": {
+      "absolute_cm": -0.04,
+      "relative_pct": -2.2
+    },
+    "recommendation": {
+      "preferred_method": "sobel"
+    }
+  },
+  "quality_flags": {
+    "card_detected": true,
+    "finger_detected": true,
+    "view_angle_ok": true,
+    "edge_quality_ok": true
+  },
+  "fail_reason": null
+}
+```
+
 ### Debug Visualization
 
-When using the `--debug` flag, the program generates an annotated image showing:
+When using the `--debug` flag, the program generates annotated images:
+
+**Main Debug Overlay** (`output/debug.png`):
 - ✅ Credit card contour and corners (green)
 - 👆 Finger contour (magenta)
 - 📏 Finger axis and endpoints (cyan/yellow)
@@ -137,9 +211,14 @@ When using the `--debug` flag, the program generates an annotated image showing:
 - 🔵 Measurement intersection points (blue)
 - 📝 Final measurement and confidence annotation
 
+**Additional Debug Directories** (when `--debug` used):
+- `output/card_detection_debug/` - 21 images showing card detection pipeline
+- `output/finger_segmentation_debug/` - 24 images showing finger isolation process
+- `output/edge_refinement_debug/` - 12 images showing Sobel edge detection (v1)
+
 ## 🏗️ System Architecture
 
-### Processing Pipeline
+### Processing Pipeline (v1)
 
 ```
 Input Image
@@ -152,13 +231,15 @@ Input Image
     ↓
 4. Finger Contour Extraction
     ↓
-5. Finger Axis Estimation (PCA)
+5a. Finger Axis Estimation (Landmark-based) ← v1
+5b. Fallback: PCA-based Axis (v0)
     ↓
 6. Ring-Wearing Zone Localization (15-25% from palm)
     ↓
-7. Cross-Section Width Measurement (20 samples)
+7a. Contour-Based Width Measurement (v0)
+7b. Sobel Edge Refinement (v1) ← Optional
     ↓
-8. Confidence Scoring
+8. Confidence Scoring (with Edge Quality v1)
     ↓
 Output: JSON + Debug Visualization
 ```
@@ -169,29 +250,60 @@ Output: JSON + Debug Visualization
 |--------|---------|
 | `card_detection.py` | Credit card detection, perspective correction, scale calibration |
 | `finger_segmentation.py` | MediaPipe integration, hand/finger isolation, mask generation |
-| `geometry.py` | PCA axis estimation, zone localization, width measurement |
+| `geometry.py` | Landmark/PCA axis estimation, zone localization, width measurement |
+| `edge_refinement.py` | **[v1]** Sobel gradient edge detection, sub-pixel refinement |
 | `image_quality.py` | Blur detection, exposure check, resolution validation |
-| `confidence.py` | Multi-factor confidence scoring and classification |
+| `confidence.py` | Multi-factor confidence scoring with edge quality (v1) |
 | `visualization.py` | Debug overlay generation with detailed annotations |
+| `debug_observer.py` | Debug pipeline infrastructure and drawing functions |
 
 ## 🔬 Technical Details
+
+### Edge Detection Methods (v1)
+
+The system supports two edge detection approaches:
+
+**v0 Method: Contour-Based** (default for auto mode fallback)
+- Extracts edges from morphologically processed finger mask
+- Fast and reliable for well-segmented fingers
+- Accuracy: ±0.5-2mm depending on mask quality
+
+**v1 Method: Sobel Edge Refinement** (recommended)
+- Landmark-based finger axis for improved accuracy
+- Bidirectional Sobel gradient filtering
+- Sub-pixel edge localization via parabola fitting
+- Mask-constrained edge search (±10px around finger boundaries)
+- Target accuracy: <0.5mm with sub-pixel precision
+- 4-metric quality scoring (gradient strength, consistency, smoothness, symmetry)
+
+**Auto Mode Behavior:**
+- Attempts Sobel edge refinement first
+- Falls back to contour method if edge quality insufficient (score <0.7)
+- Transparent reporting of which method was used
 
 ### Ring-Wearing Zone Definition
 
 The measurement is taken at the **ring-wearing zone**, defined as:
 - Located **15%-25% of finger length** from the palm-side end
-- Width measured by sampling **20 cross-sections** within this zone
+- Width measured by sampling **20 cross-sections** (contour) or **500+ cross-sections** (Sobel) within this zone
 - Final measurement: **median width** across all samples (robust to outliers)
 
 ### Confidence Scoring
 
-The system calculates a comprehensive confidence score (0-1) based on:
-
+**v0 Confidence** (contour method):
 | Component | Weight | Factors |
 |-----------|--------|---------|
 | **Card Detection** | 30% | Detection quality, aspect ratio, scale calibration |
 | **Finger Detection** | 30% | Hand landmarks confidence, mask area validity |
 | **Measurement Quality** | 40% | Variance, consistency, outlier ratio, range validation |
+
+**v1 Confidence** (Sobel method):
+| Component | Weight | Factors |
+|-----------|--------|---------|
+| **Card Detection** | 25% | Detection quality, aspect ratio, scale calibration |
+| **Finger Detection** | 25% | Hand landmarks confidence, mask area validity |
+| **Edge Quality** | 20% | Gradient strength, consistency, smoothness, symmetry |
+| **Measurement Quality** | 30% | Variance, consistency, outlier ratio, range validation |
 
 **Confidence Levels:**
 - 🟢 **HIGH** (>0.85): Measurement is highly reliable
@@ -211,6 +323,7 @@ Based on testing with various image conditions:
 
 ## 🛠️ Development Status
 
+### v0 (Baseline) ✅
 ✅ **Phase 1**: Project Setup & Infrastructure  
 ✅ **Phase 2**: Image Quality Assessment  
 ✅ **Phase 3**: Credit Card Detection & Scale Calibration  
@@ -221,7 +334,15 @@ Based on testing with various image conditions:
 ✅ **Phase 8**: Confidence Scoring  
 ✅ **Phase 9**: Debug Visualization  
 
-All core features are complete and tested!
+### v1 (Edge Refinement) ✅
+✅ **Phase 1**: Landmark-Based Axis Estimation  
+✅ **Phase 2**: Sobel Edge Detection Core  
+✅ **Phase 3**: Sub-Pixel Refinement & Quality Scoring  
+✅ **Phase 4**: Method Comparison & CLI Integration  
+✅ **Phase 5**: Debug Visualization (12-image pipeline)  
+🔄 **Phase 6**: Validation & Documentation (In Progress)
+
+All core features are complete and functional!
 
 ## 🔧 Command-Line Options
 
@@ -233,6 +354,11 @@ All core features are complete and tested!
 | `--save-intermediate` | ❌ | False | Save intermediate processing artifacts |
 | `--finger-index` | ❌ | auto | Finger to measure: auto, index, middle, ring, pinky |
 | `--confidence-threshold` | ❌ | 0.7 | Minimum confidence threshold (0.0-1.0) |
+| **v1 Options** | | | |
+| `--edge-method` | ❌ | auto | Edge detection method: auto, contour, sobel, compare |
+| `--sobel-threshold` | ❌ | 15.0 | Minimum gradient magnitude for Sobel edge detection |
+| `--sobel-kernel-size` | ❌ | 3 | Sobel kernel size: 3, 5, or 7 |
+| `--no-subpixel` | ❌ | False | Disable sub-pixel edge refinement |
 
 ## 📦 Dependencies
 

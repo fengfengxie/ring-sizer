@@ -18,9 +18,10 @@ For tasks of **bug fixing**:
 4. Commit with a clear, concise message
 
 For tasks of **reboot** from a new codex session:
-1. Read doc/v0/PRD.md, doc/v0/Plan.md, doc/v0/Progress.md.
-2. Assume this is a continuation of an existing project.
-3. Summarize your understanding of the current state and propose the next concrete step without writing code yet.
+1. Read doc/v0/PRD.md, doc/v0/Plan.md, doc/v0/Progress.md for baseline implementation
+2. Read doc/v1/PRD.md, doc/v1/Plan.md, doc/v1/Progress.md for edge refinement (v1)
+3. Assume this is a continuation of an existing project.
+4. Summarize your understanding of the current state and propose the next concrete step without writing code yet.
 
 ## Project Overview
 
@@ -28,6 +29,8 @@ Ring Sizer is a **local, terminal-executable computer vision program** that meas
 
 **Key characteristics:**
 - Single image input (JPG/PNG)
+- **v1: Dual edge detection** - Landmark-based axis + Sobel gradient refinement
+- MediaPipe-based hand and finger segmentation
 - MediaPipe-based hand and finger segmentation
 - Outputs JSON measurement data and optional debug visualization
 - No cloud processing, runs entirely locally
@@ -47,7 +50,7 @@ pip install -r requirements.txt
 
 ### Running the Program
 ```bash
-# Basic measurement
+# Basic measurement (auto mode - prefers Sobel v1, falls back to contour v0)
 python measure_finger.py --input input/test_image.jpg --output output/result.json
 
 # With debug visualization
@@ -56,13 +59,26 @@ python measure_finger.py \
   --output output/result.json \
   --debug output/debug_overlay.png
 
-# Specify finger and confidence threshold
+# Force Sobel edge refinement (v1)
 python measure_finger.py \
   --input image.jpg \
   --output result.json \
-  --finger-index ring \
-  --confidence-threshold 0.8 \
-  --save-intermediate
+  --edge-method sobel \
+  --sobel-threshold 15.0 \
+  --debug output/debug.png
+
+# Compare both methods
+python measure_finger.py \
+  --input image.jpg \
+  --output result.json \
+  --edge-method compare \
+  --debug output/debug.png
+
+# Force contour method (v0)
+python measure_finger.py \
+  --input image.jpg \
+  --output result.json \
+  --edge-method contour
 ```
 
 ## Architecture Overview
@@ -117,6 +133,127 @@ The codebase is organized into focused utility modules in `src/`:
 - Line-contour intersection algorithm finds left/right edges
 - Uses farthest pair of intersections to handle complex contours
 - Converts pixels to cm using calibrated scale factor
+
+---
+
+## v1 Architecture (Edge Refinement)
+
+### What's New in v1
+
+v1 improves measurement accuracy by replacing contour-based edge detection with gradient-based Sobel edge refinement. Key improvements:
+
+- **Landmark-based axis**: Uses MediaPipe finger landmarks (MCP→PIP→DIP→TIP) for more anatomically consistent axis estimation
+- **Sobel edge detection**: Bidirectional gradient filtering for pixel-precise edge localization
+- **Sub-pixel refinement**: Parabola fitting achieves <0.5px precision (~0.003cm at typical resolution)
+- **Quality-based fallback**: Automatically uses v0 contour method if Sobel quality insufficient
+- **Enhanced confidence**: Adds edge quality component (gradient strength, consistency, smoothness, symmetry)
+
+### v1 Processing Pipeline (Enhanced Phases)
+
+**Phase 5a: Landmark-Based Axis Estimation (v1)**
+- Uses MediaPipe finger landmarks directly (4 points: MCP, PIP, DIP, TIP)
+- Three calculation methods:
+  - `endpoints`: Simple MCP→TIP vector
+  - `linear_fit`: Linear regression on all 4 landmarks (default, most robust)
+  - `median_direction`: Median of segment directions
+- Falls back to PCA if landmarks unavailable or quality check fails
+- Validation checks: NaN/inf, minimum spacing, monotonic progression, minimum length
+
+**Phase 7b: Sobel Edge Refinement (v1)**
+```
+1. Extract ROI around ring zone → 2. Apply bidirectional Sobel filters →
+3. Detect edges per cross-section → 4. Sub-pixel refinement → 5. Measure width
+```
+
+1. **ROI Extraction**
+   - Rectangular region around ring zone with padding (50px for gradient context)
+   - Width estimation: `finger_length / 3.0` (conservative)
+   - Optional rotation alignment (not used by default)
+
+2. **Bidirectional Sobel Filtering**
+   - Applies `cv2.Sobel` with configurable kernel size (3, 5, or 7)
+   - Computes gradient_x (horizontal edges), gradient_y (vertical edges)
+   - Calculates gradient magnitude and direction
+   - Auto-detects filter orientation from ROI aspect ratio
+
+3. **Edge Detection Per Cross-Section**
+   - **Mask-constrained mode** (primary):
+     - Finds leftmost/rightmost finger mask pixels (finger boundaries)
+     - Searches ±10px around boundaries for strongest gradient
+     - Combines anatomical accuracy (mask) with sub-pixel precision (gradient)
+   - **Gradient-only mode** (fallback): Pure Sobel without mask constraint
+
+4. **Sub-Pixel Edge Localization**
+   - Parabola fitting: f(x) = ax² + bx + c
+   - Samples gradient at x-1, x, x+1
+   - Finds parabola peak: x_peak = -b/(2a)
+   - Constrains refinement to ±0.5 pixels
+   - Achieves <0.5px precision (~0.003cm at 185 px/cm)
+
+5. **Width Measurement**
+   - Calculates width for each valid row
+   - Outlier filtering using Median Absolute Deviation (MAD)
+   - Removes measurements >3 MAD from median
+   - Computes median, mean, std dev
+   - Converts pixels to cm using scale factor
+
+**Phase 8b: Enhanced Confidence Scoring (v1)**
+- Adds 4th component: Edge Quality (20% weight)
+  - Gradient strength: Avg magnitude at detected edges
+  - Consistency: % of rows with valid edge pairs
+  - Smoothness: Edge position variance (lower = better)
+  - Symmetry: Left/right edge strength balance
+- Reweights other components: Card 25%, Finger 25%, Measurement 30%
+
+### v1 Module Structure
+
+| Module | v1 Enhancements |
+|--------|-----------------|
+| `geometry.py` | Added `estimate_finger_axis_from_landmarks()`, `_validate_landmark_quality()`, landmark-based zone localization |
+| **`edge_refinement.py`** | **[NEW]** Complete Sobel edge refinement pipeline with sub-pixel precision |
+| `confidence.py` | Added `compute_edge_quality_confidence()`, dual-mode confidence calculation |
+| `debug_observer.py` | Added 9 edge refinement drawing functions for visualization |
+| `measure_finger.py` | CLI flags for edge method selection, method comparison mode |
+
+### v1 CLI Flags
+
+| Flag | Values | Default | Description |
+|------|--------|---------|-------------|
+| `--edge-method` | auto, contour, sobel, compare | auto | Edge detection method |
+| `--sobel-threshold` | float | 15.0 | Minimum gradient magnitude |
+| `--sobel-kernel-size` | 3, 5, 7 | 3 | Sobel kernel size |
+| `--no-subpixel` | flag | False | Disable sub-pixel refinement |
+
+### v1 Auto Mode Behavior
+
+When `--edge-method auto` (default):
+1. Always computes contour measurement (v0 baseline)
+2. Attempts Sobel edge refinement
+3. Evaluates Sobel quality score (threshold: 0.7)
+4. Checks consistency (>50% success rate required)
+5. Verifies width reasonableness (0.8-3.5 cm)
+6. Checks agreement with contour (<50% difference)
+7. Uses Sobel if all checks pass, otherwise falls back to contour
+8. Reports method used in `edge_method_used` field
+
+### v1 Debug Output
+
+When `--debug` flag used, generates:
+- Main debug overlay (same as v0, shows final result)
+- `output/edge_refinement_debug/` subdirectory with 12 images:
+  - **Stage A** (3): Landmark axis, ring zone, ROI extraction
+  - **Stage B** (5): Sobel gradients, candidates, selected edges
+  - **Stage C** (4): Sub-pixel refinement, widths, distribution, outliers
+
+### v1 Failure Modes (Additional)
+
+- `sobel_edge_refinement_failed` - Sobel method explicitly requested but failed
+- `quality_score_low_X.XX` - Edge quality below threshold (auto fallback)
+- `consistency_low_X.XX` - Too few valid edge detections
+- `width_unreasonable` - Measured width outside realistic range
+- `disagreement_with_contour` - Sobel and contour differ by >50%
+
+---
 
 ## Important Technical Details
 
