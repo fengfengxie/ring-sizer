@@ -685,7 +685,8 @@ def draw_selected_edges(
     edge_data: Dict[str, Any]
 ) -> np.ndarray:
     """
-    Draw final selected left/right edges.
+    Draw final selected left/right edges with enhanced visualization.
+    Shows edge points, connecting lines, and statistics.
     """
     # Convert ROI to BGR
     if len(roi_image.shape) == 2:
@@ -693,20 +694,74 @@ def draw_selected_edges(
     else:
         vis = roi_image.copy()
     
+    h, w = vis.shape[:2]
+    
     left_edges = edge_data["left_edges"]
     right_edges = edge_data["right_edges"]
     valid_rows = edge_data["valid_rows"]
     
-    # Draw edges
-    for row_idx, valid in enumerate(valid_rows):
-        if valid:
-            # Draw left edge
+    # Calculate statistics for valid edges
+    valid_left = left_edges[valid_rows]
+    valid_right = right_edges[valid_rows]
+    valid_widths = valid_right - valid_left
+    
+    if len(valid_widths) > 0:
+        median_width = np.median(valid_widths)
+        
+        # Draw connecting lines for every Nth row (to avoid clutter)
+        line_spacing = max(1, int(len(valid_rows)) // 20)  # Show ~20 lines
+        
+        count = 0  # Count valid rows
+        for row_idx, valid in enumerate(valid_rows):
+            if not valid:
+                continue
+                
             left_x = int(left_edges[row_idx])
-            cv2.circle(vis, (left_x, row_idx), 3, Color.CYAN, -1)
-            
-            # Draw right edge
             right_x = int(right_edges[row_idx])
-            cv2.circle(vis, (right_x, row_idx), 3, Color.MAGENTA, -1)
+            width = right_x - left_x
+            
+            # Draw connecting line (every Nth valid row)
+            if count % line_spacing == 0:
+                # Color based on width deviation
+                deviation = abs(width - median_width) / median_width if median_width > 0 else 0
+                if deviation < 0.05:
+                    line_color = Color.GREEN
+                elif deviation < 0.15:
+                    line_color = Color.YELLOW
+                else:
+                    line_color = Color.ORANGE
+                
+                cv2.line(vis, (left_x, row_idx), (right_x, row_idx), line_color, 1)
+            
+            count += 1  # Increment valid row counter
+        
+        # Draw edge points on top
+        for row_idx, valid in enumerate(valid_rows):
+            if valid:
+                # Draw left edge (blue)
+                left_x = int(left_edges[row_idx])
+                cv2.circle(vis, (left_x, row_idx), 2, Color.CYAN, -1)
+                
+                # Draw right edge (magenta)
+                right_x = int(right_edges[row_idx])
+                cv2.circle(vis, (right_x, row_idx), 2, Color.MAGENTA, -1)
+        
+        # Add text annotations
+        valid_pct = np.sum(valid_rows) / len(valid_rows) * 100
+        text_lines = [
+            f"Valid edges: {np.sum(valid_rows)}/{len(valid_rows)} ({valid_pct:.1f}%)",
+            f"Left range: {np.min(valid_left):.1f}-{np.max(valid_left):.1f}px",
+            f"Right range: {np.min(valid_right):.1f}-{np.max(valid_right):.1f}px",
+            f"Width: {np.min(valid_widths):.1f}-{np.max(valid_widths):.1f}px",
+            f"Median: {median_width:.1f}px"
+        ]
+        
+        for i, text in enumerate(text_lines):
+            y = 30 + i * 30
+            # Background for readability
+            (text_w, text_h), _ = cv2.getTextSize(text, FONT_FACE, FontScale.SMALL, FontThickness.BODY)
+            cv2.rectangle(vis, (10, y - text_h - 5), (10 + text_w + 10, y + 5), (0, 0, 0), -1)
+            cv2.putText(vis, text, (15, y), FONT_FACE, FontScale.SMALL, Color.WHITE, FontThickness.BODY)
     
     return vis
 
@@ -824,6 +879,132 @@ def draw_outlier_detection(
         FONT_FACE, FontScale.BODY,
         Color.RED, FontThickness.BODY
     )
+    
+    return vis
+
+
+def draw_comprehensive_edge_overlay(
+    full_image: np.ndarray,
+    edge_data: Dict[str, Any],
+    roi_bounds: Tuple[int, int, int, int],
+    axis_data: Dict[str, Any],
+    zone_data: Dict[str, Any],
+    width_data: Dict[str, Any],
+    scale_px_per_cm: float
+) -> np.ndarray:
+    """
+    Comprehensive visualization showing detected edges overlaid on full image
+    with axis, zone, and measurement annotations.
+    """
+    vis = full_image.copy()
+    h, w = vis.shape[:2]
+    
+    x_min, y_min, x_max, y_max = roi_bounds
+    left_edges = edge_data["left_edges"]
+    right_edges = edge_data["right_edges"]
+    valid_rows = edge_data["valid_rows"]
+    
+    # 1. Draw axis line
+    # Handle both PCA (tip_point, palm_point) and landmark-based axis (center, direction)
+    if "center" in axis_data:
+        axis_center = axis_data["center"]
+    elif "tip_point" in axis_data and "palm_point" in axis_data:
+        axis_center = (axis_data["tip_point"] + axis_data["palm_point"]) / 2
+    else:
+        # Fallback: use midpoint of axis
+        axis_center = np.array([w//2, h//2])
+    
+    axis_direction = axis_data["direction"]
+    axis_length = axis_data["length"]
+    
+    axis_start = axis_center - axis_direction * (axis_length / 2)
+    axis_end = axis_center + axis_direction * (axis_length / 2)
+    cv2.line(vis, tuple(axis_start.astype(int)), tuple(axis_end.astype(int)), 
+             Color.YELLOW, 2, cv2.LINE_AA)
+    
+    # 2. Draw ring zone bounds
+    zone_start = zone_data["start_point"]
+    zone_end = zone_data["end_point"]
+    perp_direction = np.array([-axis_direction[1], axis_direction[0]])
+    zone_width = 400  # Visual width for zone band
+    
+    zone_corners = [
+        zone_start + perp_direction * zone_width,
+        zone_start - perp_direction * zone_width,
+        zone_end - perp_direction * zone_width,
+        zone_end + perp_direction * zone_width,
+    ]
+    zone_pts = np.array([c.astype(int) for c in zone_corners])
+    cv2.polylines(vis, [zone_pts], True, Color.ORANGE, 2, cv2.LINE_AA)
+    
+    # 3. Draw ROI boundary
+    cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), Color.CYAN, 2)
+    
+    # 4. Draw detected edges
+    line_spacing = max(1, int(np.sum(valid_rows)) // 25)  # Show ~25 lines
+    count = 0
+    
+    for row_idx, valid in enumerate(valid_rows):
+        if not valid:
+            continue
+        
+        # Map ROI coordinates to full image
+        global_y = y_min + row_idx
+        left_x_global = x_min + int(left_edges[row_idx])
+        right_x_global = x_min + int(right_edges[row_idx])
+        
+        # Draw edge points
+        cv2.circle(vis, (left_x_global, global_y), 3, Color.BLUE, -1)
+        cv2.circle(vis, (right_x_global, global_y), 3, Color.MAGENTA, -1)
+        
+        # Draw connecting lines for every Nth row
+        if count % line_spacing == 0:
+            cv2.line(vis, (left_x_global, global_y), (right_x_global, global_y),
+                    Color.GREEN, 2, cv2.LINE_AA)
+        count += 1
+    
+    # 5. Add text annotations in top-left corner
+    median_cm = width_data["median_width_cm"]
+    median_px = width_data["median_width_px"]
+    std_px = width_data["std_width_px"]
+    num_samples = width_data["num_samples"]
+    valid_pct = np.sum(valid_rows) / len(valid_rows) * 100
+    
+    annotations = [
+        f"Sobel Edge Detection Results:",
+        f"  Median Width: {median_cm:.3f} cm ({median_px:.1f} px)",
+        f"  Std Dev: {std_px:.2f} px",
+        f"  Valid Edges: {np.sum(valid_rows)}/{len(valid_rows)} ({valid_pct:.1f}%)",
+        f"  Measurements: {num_samples}",
+        f"  Scale: {scale_px_per_cm:.2f} px/cm",
+        "",
+        "Legend:",
+        "  Yellow line = Finger axis",
+        "  Orange box = Ring zone",
+        "  Cyan box = ROI",
+        "  Blue dots = Left edges",
+        "  Magenta dots = Right edges",
+        "  Green lines = Width measurements"
+    ]
+    
+    # Draw text with background for readability
+    y_offset = 40
+    for line in annotations:
+        if line:  # Skip empty lines for background
+            (text_w, text_h), baseline = cv2.getTextSize(line, FONT_FACE, FontScale.SMALL, FontThickness.BODY)
+            # Black background
+            cv2.rectangle(vis, (15, y_offset - text_h - 5), (25 + text_w, y_offset + baseline), 
+                         (0, 0, 0), -1)
+        # Draw text
+        if line.startswith("  "):
+            color = Color.WHITE
+        elif line.endswith(":"):
+            color = Color.YELLOW
+        else:
+            color = Color.CYAN
+        cv2.putText(vis, line, (20, y_offset), FONT_FACE, FontScale.SMALL, 
+                   color, FontThickness.BODY, cv2.LINE_AA)
+        y_offset += 25
     
     return vis
 

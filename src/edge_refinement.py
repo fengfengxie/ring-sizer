@@ -961,6 +961,7 @@ def refine_edges_sobel(
         from src.debug_observer import draw_roi_extraction, draw_gradient_visualization
         from src.debug_observer import draw_edge_candidates, draw_selected_edges
         from src.debug_observer import draw_width_measurements, draw_outlier_detection
+        from src.debug_observer import draw_comprehensive_edge_overlay
         observer = DebugObserver(debug_dir)
     
     # Stage A: Axis & Zone Visualization
@@ -1059,6 +1060,12 @@ def refine_edges_sobel(
         # C.4: Outlier detection
         observer.draw_and_save("12_outlier_detection", roi_data["roi_image"], 
                              draw_outlier_detection, edge_data, width_data)
+        
+        # C.5: Comprehensive edge overlay on full image
+        observer.draw_and_save("13_comprehensive_overlay", image, 
+                             draw_comprehensive_edge_overlay,
+                             edge_data, roi_data["roi_bounds"], axis_data, zone_data,
+                             width_data, scale_px_per_cm)
 
     # Step 5: Compute edge quality score
     edge_quality = compute_edge_quality_score(
