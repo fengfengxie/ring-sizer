@@ -36,27 +36,40 @@ INPUT_IMAGE=""
 OUTPUT_JSON="output/test_result.json"
 DEBUG_OUTPUT="output/test_debug.png"
 ENABLE_DEBUG=true
+SKIP_CARD=false
 
 # Parse arguments
-if [ $# -gt 0 ]; then
-    if [ "$1" == "--no-debug" ]; then
-        ENABLE_DEBUG=false
-    elif [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
-        echo "Usage: ./script/test.sh [OPTIONS] [IMAGE]"
-        echo ""
-        echo "Options:"
-        echo "  --no-debug          Run without debug visualization"
-        echo "  --help, -h          Show this help message"
-        echo ""
-        echo "Examples:"
-        echo "  ./script/test.sh                        # Use first available test image"
-        echo "  ./script/test.sh input/my_image.jpg     # Test with specific image"
-        echo "  ./script/test.sh --no-debug             # Skip debug output"
-        exit 0
-    else
-        INPUT_IMAGE="$1"
-    fi
-fi
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-debug)
+            ENABLE_DEBUG=false
+            shift
+            ;;
+        --skip-card-detection|--skip-card)
+            SKIP_CARD=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: ./script/test.sh [OPTIONS] [IMAGE]"
+            echo ""
+            echo "Options:"
+            echo "  --no-debug              Run without debug visualization"
+            echo "  --skip-card-detection   Skip card detection (testing mode for finger segmentation)"
+            echo "  --help, -h              Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  ./script/test.sh                        # Use first available test image"
+            echo "  ./script/test.sh input/my_image.jpg     # Test with specific image"
+            echo "  ./script/test.sh --no-debug             # Skip debug output"
+            echo "  ./script/test.sh --skip-card-detection  # Test finger segmentation without card"
+            exit 0
+            ;;
+        *)
+            INPUT_IMAGE="$1"
+            shift
+            ;;
+    esac
+done
 
 # Find first available test image if not specified
 if [ -z "$INPUT_IMAGE" ]; then
@@ -94,6 +107,10 @@ if [ "$ENABLE_DEBUG" = true ]; then
     CMD="$CMD --debug $DEBUG_OUTPUT"
 fi
 
+if [ "$SKIP_CARD" = true ]; then
+    CMD="$CMD --skip-card-detection"
+fi
+
 # Print test info
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Ring Sizer Quick Test${NC}"
@@ -102,6 +119,9 @@ echo -e "${BLUE}Input:${NC}  $INPUT_IMAGE"
 echo -e "${BLUE}Output:${NC} $OUTPUT_JSON"
 if [ "$ENABLE_DEBUG" = true ]; then
     echo -e "${BLUE}Debug:${NC}  $DEBUG_OUTPUT"
+fi
+if [ "$SKIP_CARD" = true ]; then
+    echo -e "${YELLOW}Mode:${NC}   TESTING (card detection skipped)"
 fi
 echo -e "${GREEN}========================================${NC}"
 echo ""
@@ -126,10 +146,10 @@ if [ "$ENABLE_DEBUG" = true ] && [ -f "$DEBUG_OUTPUT" ]; then
     echo ""
 
     # Try to open the debug image (macOS)
-    if command -v open &> /dev/null; then
-        echo -e "${YELLOW}Opening debug visualization...${NC}"
-        open "$DEBUG_OUTPUT"
-    fi
+    #if command -v open &> /dev/null; then
+    #    echo -e "${YELLOW}Opening debug visualization...${NC}"
+    #    open "$DEBUG_OUTPUT"
+    #fi
 fi
 
 echo -e "${GREEN}========================================${NC}"

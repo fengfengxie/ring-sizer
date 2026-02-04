@@ -116,6 +116,13 @@ Examples:
         help="Disable sub-pixel edge refinement",
     )
 
+    # Testing/debugging options
+    parser.add_argument(
+        "--skip-card-detection",
+        action="store_true",
+        help="[TESTING ONLY] Skip card detection and use dummy scale (allows testing finger segmentation without card)",
+    )
+
     return parser.parse_args()
 
 
@@ -227,6 +234,7 @@ def measure_finger(
     sobel_threshold: float = 15.0,
     sobel_kernel_size: int = 3,
     use_subpixel: bool = True,
+    skip_card_detection: bool = False,
 ) -> Dict[str, Any]:
     """
     Main measurement pipeline.
@@ -294,23 +302,33 @@ def measure_finger(
         from pathlib import Path
         card_debug_dir = str(Path(debug_path).parent / "card_detection_debug")
 
-    card_result = detect_credit_card(image_canonical, debug_dir=card_debug_dir)
+    # Allow skipping card detection for testing finger segmentation
+    if skip_card_detection:
+        print("⚠️  TESTING MODE: Skipping card detection (using dummy scale factor)")
+        card_result = None
+        px_per_cm = 100.0  # Dummy scale: 100 pixels/cm (measurements will be inaccurate)
+        scale_confidence = 0.5  # Low confidence to indicate dummy value
+        view_angle_ok = True
+        card_detected = False
+    else:
+        card_result = detect_credit_card(image_canonical, debug_dir=card_debug_dir)
 
-    if card_result is None:
-        print("Credit card not detected in image")
-        return create_output(
-            card_detected=False,
-            fail_reason="card_not_detected",
-        )
+        if card_result is None:
+            print("Credit card not detected in image")
+            return create_output(
+                card_detected=False,
+                fail_reason="card_not_detected",
+            )
 
-    # Compute scale factor
-    px_per_cm, scale_confidence = compute_scale_factor(card_result["corners"])
-    print(f"Card detected: {card_result['width_px']:.0f}x{card_result['height_px']:.0f}px, "
-          f"aspect={card_result['aspect_ratio']:.3f}, confidence={card_result['confidence']:.2f}")
-    print(f"Scale: {px_per_cm:.2f} px/cm (confidence={scale_confidence:.2f})")
+        # Compute scale factor
+        px_per_cm, scale_confidence = compute_scale_factor(card_result["corners"])
+        print(f"Card detected: {card_result['width_px']:.0f}x{card_result['height_px']:.0f}px, "
+              f"aspect={card_result['aspect_ratio']:.3f}, confidence={card_result['confidence']:.2f}")
+        print(f"Scale: {px_per_cm:.2f} px/cm (confidence={scale_confidence:.2f})")
 
-    # Check for excessive perspective distortion (view angle)
-    view_angle_ok = scale_confidence > 0.9
+        # Check for excessive perspective distortion (view angle)
+        view_angle_ok = scale_confidence > 0.9
+        card_detected = True
 
     # Phase 5: Finger isolation (hand already segmented in Phase 3)
     h_can, w_can = image_canonical.shape[:2]
@@ -530,7 +548,11 @@ def measure_finger(
 
     # Phase 8: Comprehensive confidence scoring
     # Calculate component confidences
-    card_conf = compute_card_confidence(card_result, scale_confidence)
+    if card_result is not None:
+        card_conf = compute_card_confidence(card_result, scale_confidence)
+    else:
+        # Dummy card confidence when card detection skipped (testing mode)
+        card_conf = scale_confidence  # Use dummy scale confidence (0.5)
 
     # Calculate mask area for finger confidence
     mask_area = np.sum(cleaned_mask > 0)
@@ -592,7 +614,7 @@ def measure_finger(
     return create_output(
         finger_diameter_cm=median_width_cm,
         confidence=confidence_breakdown['overall'],
-        card_detected=True,
+        card_detected=card_detected,
         finger_detected=True,
         scale_px_per_cm=px_per_cm,
         view_angle_ok=view_angle_ok,
@@ -631,6 +653,7 @@ def main() -> int:
         sobel_threshold=args.sobel_threshold,
         sobel_kernel_size=args.sobel_kernel_size,
         use_subpixel=not args.no_subpixel,
+        skip_card_detection=args.skip_card_detection,
     )
 
     # Save output
