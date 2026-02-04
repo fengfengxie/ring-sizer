@@ -877,19 +877,27 @@ def draw_outlier_detection(
                 
                 cv2.line(vis, (left_x, row_idx), (right_x, row_idx), color, 2)
     
-    # Add annotation
+    # Add annotation with adaptive font scaling
+    h = vis.shape[0]
+    font_scale = max(0.4, h / 500.0)
+    thickness = max(1, int(h / 150.0))
+
     text = f"Outliers: {outliers_removed}"
-    cv2.putText(
-        vis, text, (10, 30),
-        FONT_FACE, FontScale.BODY,
-        Color.BLACK, FontThickness.SUBTITLE_OUTLINE
-    )
-    cv2.putText(
-        vis, text, (10, 30),
-        FONT_FACE, FontScale.BODY,
-        Color.RED, FontThickness.BODY
-    )
-    
+    y_pos = int(h * 0.10)  # Position at 10% of image height
+
+    # Get text size for background
+    (text_w, text_h), baseline = cv2.getTextSize(text, FONT_FACE, font_scale, thickness)
+
+    # Draw background for readability
+    cv2.rectangle(vis, (5, y_pos - text_h - 5), (15 + text_w, y_pos + baseline),
+                  (0, 0, 0), -1)
+
+    # Draw text with outline
+    cv2.putText(vis, text, (10, y_pos), FONT_FACE, font_scale,
+                Color.BLACK, thickness + 2, cv2.LINE_AA)
+    cv2.putText(vis, text, (10, y_pos), FONT_FACE, font_scale,
+                Color.RED, thickness, cv2.LINE_AA)
+
     return vis
 
 
@@ -973,13 +981,18 @@ def draw_comprehensive_edge_overlay(
                     Color.GREEN, 2, cv2.LINE_AA)
         count += 1
     
-    # 5. Add text annotations in top-left corner
+    # 5. Add text annotations in top-left corner with adaptive sizing
     median_cm = width_data["median_width_cm"]
     median_px = width_data["median_width_px"]
     std_px = width_data["std_width_px"]
     num_samples = width_data["num_samples"]
     valid_pct = np.sum(valid_rows) / len(valid_rows) * 100
-    
+
+    # Adaptive font scaling based on image height
+    font_scale = max(0.4, h / 800.0)  # Scale for full-sized images
+    line_height = int(25 + h / 60.0)  # Scale line spacing
+    thickness = max(1, int(h / 300.0))
+
     annotations = [
         f"Sobel Edge Detection Results:",
         f"  Median Width: {median_cm:.3f} cm ({median_px:.1f} px)",
@@ -996,14 +1009,14 @@ def draw_comprehensive_edge_overlay(
         "  Magenta dots = Right edges",
         "  Green lines = Width measurements"
     ]
-    
+
     # Draw text with background for readability
-    y_offset = 40
+    y_offset = line_height
     for line in annotations:
         if line:  # Skip empty lines for background
-            (text_w, text_h), baseline = cv2.getTextSize(line, FONT_FACE, FontScale.SMALL, FontThickness.BODY)
+            (text_w, text_h), baseline = cv2.getTextSize(line, FONT_FACE, font_scale, thickness)
             # Black background
-            cv2.rectangle(vis, (15, y_offset - text_h - 5), (25 + text_w, y_offset + baseline), 
+            cv2.rectangle(vis, (15, y_offset - text_h - 5), (25 + text_w, y_offset + baseline),
                          (0, 0, 0), -1)
         # Draw text
         if line.startswith("  "):
@@ -1012,10 +1025,10 @@ def draw_comprehensive_edge_overlay(
             color = Color.YELLOW
         else:
             color = Color.CYAN
-        cv2.putText(vis, line, (20, y_offset), FONT_FACE, FontScale.SMALL, 
-                   color, FontThickness.BODY, cv2.LINE_AA)
-        y_offset += 25
-    
+        cv2.putText(vis, line, (20, y_offset), FONT_FACE, font_scale,
+                   color, thickness, cv2.LINE_AA)
+        y_offset += line_height
+
     return vis
 
 
