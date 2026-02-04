@@ -266,7 +266,8 @@ def detect_edges_per_row(
     gradient_data: Dict[str, Any],
     roi_data: Dict[str, Any],
     threshold: float = 30.0,
-    expected_width_px: Optional[float] = None
+    expected_width_px: Optional[float] = None,
+    scale_px_per_cm: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Detect left and right finger edges for each row (cross-section).
@@ -274,15 +275,18 @@ def detect_edges_per_row(
     For each row in the ROI:
     1. Find all pixels above gradient threshold
     2. Use finger axis to determine left vs right side
-    3. Select strongest edge on left side of axis as left boundary
-    4. Select strongest edge on right side of axis as right boundary
-    5. Validate: width reasonable, edges symmetric
+    3. Evaluate all left-right edge combinations using:
+       - Width constraint (16.5mm-22.5mm for typical fingers)
+       - Symmetry around axis (edges equidistant from center)
+       - Gradient strength (prefer stronger edges)
+    4. Select best combination based on weighted score
 
     Args:
         gradient_data: Output from apply_sobel_filters()
         roi_data: Output from extract_ring_zone_roi()
         threshold: Minimum gradient magnitude for valid edge
-        expected_width_px: Expected finger width (optional, for validation)
+        expected_width_px: Expected finger width from contour (optional)
+        scale_px_per_cm: Scale factor for width validation (optional)
 
     Returns:
         Dictionary containing:
@@ -298,11 +302,86 @@ def detect_edges_per_row(
 
     h, w = gradient_magnitude.shape
     
-    # Get axis information for left/right determination
+    # Calculate realistic finger width range in pixels
+    # Typical finger widths: 14mm (very thin, size 3) to 25mm (very thick, size 15+)
+    # Most common: 16.5mm (size 6) to 22.5mm (size 13)
+    # Using wider range to avoid false rejections
+    min_finger_width_cm = 1.4
+    max_finger_width_cm = 2.8
+    
+    min_width_px = None
+    max_width_px = None
+    if scale_px_per_cm is not None:
+        min_width_px = min_finger_width_cm * scale_px_per_cm
+        max_width_px = max_finger_width_cm * scale_px_per_cm
+        print(f"  [DEBUG] Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px ({min_finger_width_cm}-{max_finger_width_cm}cm)")
+    elif expected_width_px is not None:
+        # Use expected width with ±30% tolerance
+        min_width_px = expected_width_px * 0.7
+        max_width_px = expected_width_px * 1.3
+        print(f"  [DEBUG] Width constraint: {min_width_px:.1f}-{max_width_px:.1f}px (±30% of expected)")
+    else:
+        print(f"  [DEBUG] No width constraint (scale and expected width both None)")
+    
+    # Get axis information for left/right determination and symmetry checking
     axis_center = roi_data.get("axis_center_in_roi")
     axis_direction = roi_data.get("axis_direction_in_roi")
     zone_start = roi_data.get("zone_start_in_roi")
     zone_end = roi_data.get("zone_end_in_roi")
+    
+    def score_edge_pair(left_x, right_x, left_strength, right_strength, row_y):
+        """
+        Score an edge pair based on width constraint, symmetry, and gradient strength.
+        
+        Returns: score (higher is better), or None if invalid
+        """
+        width = right_x - left_x
+        
+        # Hard constraint: width must be in realistic range
+        if min_width_px is not None and max_width_px is not None:
+            if width < min_width_px or width > max_width_px:
+                return None  # Invalid
+        
+        # Calculate axis x-coordinate at this row
+        if axis_center is not None and axis_direction is not None:
+            if abs(axis_direction[1]) < 1e-6:
+                axis_x = axis_center[0]
+            else:
+                t = (row_y - axis_center[1]) / axis_direction[1]
+                axis_x = axis_center[0] + t * axis_direction[0]
+            
+            # Calculate distances from axis
+            left_dist = abs(axis_x - left_x)
+            right_dist = abs(right_x - axis_x)
+            
+            # Symmetry score: edges should be roughly equidistant from axis
+            # Perfect symmetry = 1.0, asymmetric = 0.0
+            if left_dist > 0 and right_dist > 0:
+                symmetry_ratio = min(left_dist, right_dist) / max(left_dist, right_dist)
+            else:
+                symmetry_ratio = 0.0
+        else:
+            # Fallback: assume symmetry if no axis info
+            symmetry_ratio = 1.0
+        
+        # Gradient strength score: prefer stronger edges
+        # Normalize by threshold so score is in [0, 1+] range
+        strength_score = (left_strength + right_strength) / (2 * threshold)
+        strength_score = min(strength_score, 2.0) / 2.0  # Cap at 2x threshold, normalize to [0, 1]
+        
+        # Width constraint score: prefer widths closer to typical range center
+        if min_width_px is not None and max_width_px is not None:
+            ideal_width = (min_width_px + max_width_px) / 2
+            width_deviation = abs(width - ideal_width) / ideal_width
+            width_score = max(0, 1.0 - width_deviation)  # 1.0 at ideal, 0.0 at edges
+        else:
+            width_score = 1.0
+        
+        # Combined score: weighted average
+        # Symmetry is most important (50%), then strength (30%), then width preference (20%)
+        score = 0.5 * symmetry_ratio + 0.3 * strength_score + 0.2 * width_score
+        
+        return score
     
     # Helper function: determine which side of axis a point is on
     def which_side_of_axis(point_x, point_y):
@@ -389,14 +468,35 @@ def detect_edges_per_row(
                 if len(left_candidates) == 0 or len(right_candidates) == 0:
                     continue
                 
-                # Select STRONGEST gradient (skin-to-background transition)
-                left_candidates.sort(key=lambda x: x[1], reverse=True)
-                right_candidates.sort(key=lambda x: x[1], reverse=True)
+                # NEW: Evaluate all left-right combinations and select best
+                # Consider top N candidates from each side (N=5 or all if fewer)
+                max_candidates = 5
+                left_top = left_candidates[:max_candidates]
+                right_top = right_candidates[:max_candidates]
                 
-                left_edge_x = left_candidates[0][0]
-                left_strength = left_candidates[0][1]
-                right_edge_x = right_candidates[0][0]
-                right_strength = right_candidates[0][1]
+                best_score = -1
+                best_left = None
+                best_right = None
+                best_left_strength = 0
+                best_right_strength = 0
+                
+                for left_x, left_str in left_top:
+                    for right_x, right_str in right_top:
+                        score = score_edge_pair(left_x, right_x, left_str, right_str, row)
+                        if score is not None and score > best_score:
+                            best_score = score
+                            best_left = left_x
+                            best_right = right_x
+                            best_left_strength = left_str
+                            best_right_strength = right_str
+                
+                if best_left is None or best_right is None:
+                    continue  # No valid pair found
+                
+                left_edge_x = best_left
+                left_strength = best_left_strength
+                right_edge_x = best_right
+                right_strength = best_right_strength
                 
             else:
                 # No mask: search entire row with axis constraint
@@ -420,14 +520,34 @@ def detect_edges_per_row(
                 if len(left_candidates) == 0 or len(right_candidates) == 0:
                     continue
 
-                # Select strongest gradients
-                left_candidates.sort(key=lambda x: x[1], reverse=True)
-                right_candidates.sort(key=lambda x: x[1], reverse=True)
+                # NEW: Evaluate all left-right combinations and select best
+                max_candidates = 5
+                left_top = sorted(left_candidates, key=lambda x: x[1], reverse=True)[:max_candidates]
+                right_top = sorted(right_candidates, key=lambda x: x[1], reverse=True)[:max_candidates]
                 
-                left_edge_x = left_candidates[0][0]
-                left_strength = left_candidates[0][1]
-                right_edge_x = right_candidates[0][0]
-                right_strength = right_candidates[0][1]
+                best_score = -1
+                best_left = None
+                best_right = None
+                best_left_strength = 0
+                best_right_strength = 0
+                
+                for left_x, left_str in left_top:
+                    for right_x, right_str in right_top:
+                        score = score_edge_pair(left_x, right_x, left_str, right_str, row)
+                        if score is not None and score > best_score:
+                            best_score = score
+                            best_left = left_x
+                            best_right = right_x
+                            best_left_strength = left_str
+                            best_right_strength = right_str
+                
+                if best_left is None or best_right is None:
+                    continue  # No valid pair found
+                
+                left_edge_x = best_left
+                left_strength = best_left_strength
+                right_edge_x = best_right
+                right_strength = best_right_strength
 
 
             # Calculate width
@@ -990,7 +1110,8 @@ def refine_edges_sobel(
     edge_data = detect_edges_per_row(
         gradient_data, roi_data,
         threshold=sobel_threshold,
-        expected_width_px=expected_width_px
+        expected_width_px=expected_width_px,
+        scale_px_per_cm=scale_px_per_cm
     )
     
     print(f"  [DEBUG] Valid rows: {edge_data['num_valid_rows']}/{len(edge_data['valid_rows'])} ({edge_data['num_valid_rows']/len(edge_data['valid_rows'])*100:.1f}%)")
