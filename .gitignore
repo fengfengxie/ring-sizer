@@ -5,7 +5,6 @@ __pycache__/
 *.so
 .Python
 .venv/
-venv/
 ENV/
 
 # IDE
@@ -21,6 +20,7 @@ output/*.jpg
 output/intermediate/
 output/card_detection_debug/
 output/finger_segmentation_debug/
+output/edge_refinement_debug/
 
 # Downloaded models (auto-downloaded on first run)
 model/*.task
