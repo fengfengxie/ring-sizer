@@ -8,8 +8,10 @@ Functions:
 - extract_ring_zone_roi: Extract ROI around ring zone
 - apply_sobel_filters: Bidirectional Sobel filtering
 - detect_edges_per_row: Find left/right edges in each cross-section
+- refine_edge_subpixel: Sub-pixel edge localization (Phase 3)
 - measure_width_from_edges: Compute width from edge positions
 - compute_edge_quality_score: Assess edge detection quality (Phase 3)
+- should_use_sobel_measurement: Auto fallback logic (Phase 3)
 - refine_edges_sobel: Main entry point for edge refinement
 """
 
@@ -436,24 +438,108 @@ def detect_edges_per_row(
     }
 
 
+def refine_edge_subpixel(
+    gradient_magnitude: np.ndarray,
+    edge_positions: np.ndarray,
+    valid_mask: np.ndarray,
+    method: str = "parabola"
+) -> np.ndarray:
+    """
+    Refine edge positions to sub-pixel precision.
+
+    Uses parabola fitting on gradient magnitude to find peak position
+    with <0.5 pixel accuracy.
+
+    Args:
+        gradient_magnitude: 2D gradient magnitude array
+        edge_positions: Integer edge positions (one per row/col)
+        valid_mask: Boolean mask indicating which positions are valid
+        method: Refinement method ("parabola" or "gaussian")
+
+    Returns:
+        Refined edge positions (float, sub-pixel precision)
+    """
+    refined_positions = edge_positions.copy()
+
+    if method == "parabola":
+        # Parabola fitting: fit f(x) = ax^2 + bx + c to 3 points
+        # Peak at x = -b/(2a)
+
+        for i in range(len(edge_positions)):
+            if not valid_mask[i]:
+                continue
+
+            edge_pos = int(edge_positions[i])
+
+            # Get gradient magnitude at edge and neighbors
+            # Handle edge cases (pun intended)
+            if edge_pos <= 0 or edge_pos >= gradient_magnitude.shape[1] - 1:
+                continue  # Can't refine at image boundaries
+
+            # For horizontal orientation (row-wise edge detection)
+            if len(gradient_magnitude.shape) == 2 and i < gradient_magnitude.shape[0]:
+                # Sample gradient at x-1, x, x+1
+                x_minus = edge_pos - 1
+                x_center = edge_pos
+                x_plus = edge_pos + 1
+
+                g_minus = gradient_magnitude[i, x_minus]
+                g_center = gradient_magnitude[i, x_center]
+                g_plus = gradient_magnitude[i, x_plus]
+
+                # Fit parabola: f(x) = ax^2 + bx + c
+                # Using x = -1, 0, 1 for simplicity
+                # f(-1) = a - b + c = g_minus
+                # f(0) = c = g_center
+                # f(1) = a + b + c = g_plus
+
+                c = g_center
+                a = (g_plus + g_minus - 2 * c) / 2.0
+                b = (g_plus - g_minus) / 2.0
+
+                # Peak at x_peak = -b/(2a)
+                if abs(a) > 1e-6:  # Avoid division by zero
+                    x_peak = -b / (2.0 * a)
+
+                    # Constrain to reasonable range (±0.5 pixels)
+                    if abs(x_peak) <= 0.5:
+                        refined_positions[i] = edge_pos + x_peak
+
+    elif method == "gaussian":
+        # Gaussian fitting (more complex, not implemented yet)
+        # Would fit Gaussian to 5-pixel window
+        # For now, fall back to parabola
+        return refine_edge_subpixel(gradient_magnitude, edge_positions, valid_mask, method="parabola")
+
+    else:
+        raise ValueError(f"Unknown refinement method: {method}")
+
+    return refined_positions
+
+
 def measure_width_from_edges(
     edge_data: Dict[str, Any],
     roi_data: Dict[str, Any],
-    scale_px_per_cm: float
+    scale_px_per_cm: float,
+    gradient_data: Optional[Dict[str, Any]] = None,
+    use_subpixel: bool = True
 ) -> Dict[str, Any]:
     """
     Compute finger width from detected edges.
 
     Steps:
-    1. Calculate width for each valid row: width_px = right_edge - left_edge
-    2. Filter outliers (>2 std dev from median)
-    3. Compute statistics (median, mean, std)
-    4. Convert width from pixels to cm
+    1. Apply sub-pixel refinement if gradient data available
+    2. Calculate width for each valid row: width_px = right_edge - left_edge
+    3. Filter outliers (>3 MAD from median)
+    4. Compute statistics (median, mean, std)
+    5. Convert width from pixels to cm
 
     Args:
         edge_data: Output from detect_edges_per_row()
         roi_data: Output from extract_ring_zone_roi()
         scale_px_per_cm: Pixels per cm from card detection
+        gradient_data: Optional gradient data for sub-pixel refinement
+        use_subpixel: Enable sub-pixel refinement (default True)
 
     Returns:
         Dictionary containing:
@@ -464,10 +550,34 @@ def measure_width_from_edges(
         - std_width_px: Standard deviation of widths
         - num_samples: Number of valid width measurements
         - outliers_removed: Number of outliers filtered
+        - subpixel_refinement_used: Whether sub-pixel refinement was applied
     """
-    left_edges = edge_data["left_edges"]
-    right_edges = edge_data["right_edges"]
+    left_edges = edge_data["left_edges"].copy()
+    right_edges = edge_data["right_edges"].copy()
     valid_rows = edge_data["valid_rows"]
+
+    # Apply sub-pixel refinement if available
+    subpixel_used = False
+    if use_subpixel and gradient_data is not None:
+        try:
+            gradient_magnitude = gradient_data["gradient_magnitude"]
+
+            # Refine left edges
+            left_edges = refine_edge_subpixel(
+                gradient_magnitude, left_edges, valid_rows, method="parabola"
+            )
+
+            # Refine right edges
+            right_edges = refine_edge_subpixel(
+                gradient_magnitude, right_edges, valid_rows, method="parabola"
+            )
+
+            subpixel_used = True
+        except Exception as e:
+            print(f"  Sub-pixel refinement failed: {e}, using integer positions")
+            # Fall back to integer positions
+            left_edges = edge_data["left_edges"]
+            right_edges = edge_data["right_edges"]
 
     # Calculate widths for valid rows
     widths_px = []
@@ -517,7 +627,188 @@ def measure_width_from_edges(
         "std_width_px": std_width_px,
         "num_samples": len(widths_filtered),
         "outliers_removed": int(outliers_removed),
+        "subpixel_refinement_used": subpixel_used,
     }
+
+
+def compute_edge_quality_score(
+    gradient_data: Dict[str, Any],
+    edge_data: Dict[str, Any],
+    width_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Assess quality of edge detection for confidence scoring.
+
+    Computes 4 quality metrics:
+    1. Gradient strength: Average gradient magnitude at detected edges
+    2. Edge consistency: Percentage of rows with valid edge pairs
+    3. Edge smoothness: Variance of edge positions along finger
+    4. Bilateral symmetry: Correlation between left/right edge quality
+
+    Args:
+        gradient_data: Output from apply_sobel_filters()
+        edge_data: Output from detect_edges_per_row()
+        width_data: Output from measure_width_from_edges()
+
+    Returns:
+        Dictionary containing:
+        - overall_score: Weighted average (0-1)
+        - gradient_strength_score: Gradient strength metric (0-1)
+        - consistency_score: Edge detection success rate (0-1)
+        - smoothness_score: Edge position smoothness (0-1)
+        - symmetry_score: Left/right balance (0-1)
+        - metrics: Dict with raw metric values
+    """
+    gradient_magnitude = gradient_data["gradient_magnitude"]
+    left_edges = edge_data["left_edges"]
+    right_edges = edge_data["right_edges"]
+    valid_rows = edge_data["valid_rows"]
+    edge_strengths_left = edge_data["edge_strengths_left"]
+    edge_strengths_right = edge_data["edge_strengths_right"]
+
+    # Metric 1: Gradient Strength
+    # Average gradient magnitude at detected edges, normalized
+    valid_left_strengths = edge_strengths_left[valid_rows]
+    valid_right_strengths = edge_strengths_right[valid_rows]
+
+    if len(valid_left_strengths) > 0:
+        avg_gradient_strength = (np.mean(valid_left_strengths) + np.mean(valid_right_strengths)) / 2.0
+        # Normalize: typical strong edge is 20-50, weak is <10
+        # Score = min(strength / 30, 1.0)
+        gradient_strength_score = min(avg_gradient_strength / 30.0, 1.0)
+    else:
+        avg_gradient_strength = 0.0
+        gradient_strength_score = 0.0
+
+    # Metric 2: Edge Consistency
+    # Percentage of rows with valid edge pairs
+    total_rows = len(valid_rows)
+    num_valid = np.sum(valid_rows)
+    consistency_score = num_valid / total_rows if total_rows > 0 else 0.0
+
+    # Metric 3: Edge Smoothness
+    # Measure variance of edge positions (smoother = better)
+    # Lower variance = higher score
+    if num_valid > 1:
+        # Calculate variance of left and right edges separately
+        valid_left = left_edges[valid_rows]
+        valid_right = right_edges[valid_rows]
+
+        left_variance = np.var(valid_left)
+        right_variance = np.var(valid_right)
+        avg_variance = (left_variance + right_variance) / 2.0
+
+        # Normalize: typical finger has variance <100, noisy edges >500
+        # Score = exp(-variance / 200) to map variance to 0-1
+        smoothness_score = np.exp(-avg_variance / 200.0)
+    else:
+        avg_variance = 0.0
+        smoothness_score = 0.0
+
+    # Metric 4: Bilateral Symmetry
+    # Correlation between left and right edge quality (strength balance)
+    if len(valid_left_strengths) > 1:
+        # Calculate ratio of average strengths
+        avg_left = np.mean(valid_left_strengths)
+        avg_right = np.mean(valid_right_strengths)
+
+        if avg_left > 0 and avg_right > 0:
+            # Symmetric ratio close to 1.0 is good
+            ratio = min(avg_left, avg_right) / max(avg_left, avg_right)
+            symmetry_score = ratio  # Already 0-1
+        else:
+            symmetry_score = 0.0
+    else:
+        symmetry_score = 0.0
+
+    # Weighted overall score
+    # Gradient strength: 40% (most important - indicates clear edges)
+    # Consistency: 30% (good coverage)
+    # Smoothness: 20% (stable detection)
+    # Symmetry: 10% (balanced detection)
+    overall_score = (
+        0.4 * gradient_strength_score +
+        0.3 * consistency_score +
+        0.2 * smoothness_score +
+        0.1 * symmetry_score
+    )
+
+    return {
+        "overall_score": float(overall_score),
+        "gradient_strength_score": float(gradient_strength_score),
+        "consistency_score": float(consistency_score),
+        "smoothness_score": float(smoothness_score),
+        "symmetry_score": float(symmetry_score),
+        "metrics": {
+            "avg_gradient_strength": float(avg_gradient_strength),
+            "edge_consistency_pct": float(consistency_score * 100),
+            "avg_variance": float(avg_variance) if num_valid > 1 else 0.0,
+            "left_right_strength_ratio": float(symmetry_score),
+        }
+    }
+
+
+def should_use_sobel_measurement(
+    sobel_result: Dict[str, Any],
+    contour_result: Optional[Dict[str, Any]] = None,
+    min_quality_score: float = 0.7,
+    min_consistency: float = 0.5,
+    max_difference_pct: float = 50.0
+) -> Tuple[bool, str]:
+    """
+    Decide whether to use Sobel measurement or fall back to contour.
+
+    Decision criteria:
+    1. Edge quality score > min_quality_score (default 0.7)
+    2. Edge consistency > min_consistency (default 0.5 = 50%)
+    3. If contour available: Sobel and contour agree within max_difference_pct
+
+    Args:
+        sobel_result: Output from refine_edges_sobel()
+        contour_result: Optional output from compute_cross_section_width()
+        min_quality_score: Minimum acceptable quality score
+        min_consistency: Minimum edge detection success rate
+        max_difference_pct: Maximum allowed difference from contour (%)
+
+    Returns:
+        Tuple of (should_use_sobel, reason)
+    """
+    # Check if edge quality data available
+    if "edge_quality" not in sobel_result:
+        return False, "edge_quality_data_missing"
+
+    edge_quality = sobel_result["edge_quality"]
+
+    # Check 1: Overall quality score
+    if edge_quality["overall_score"] < min_quality_score:
+        return False, f"quality_score_low_{edge_quality['overall_score']:.2f}"
+
+    # Check 2: Consistency (success rate)
+    if edge_quality["consistency_score"] < min_consistency:
+        return False, f"consistency_low_{edge_quality['consistency_score']:.2f}"
+
+    # Check 3: Measurement reasonableness
+    sobel_width = sobel_result.get("median_width_cm")
+    if sobel_width is None or sobel_width <= 0:
+        return False, "invalid_measurement"
+
+    # Typical finger width is 1.0-3.0 cm
+    if sobel_width < 0.8 or sobel_width > 3.5:
+        return False, f"unrealistic_width_{sobel_width:.2f}cm"
+
+    # Check 4: Agreement with contour (if available)
+    if contour_result is not None:
+        contour_width = contour_result.get("median_width_px")
+        sobel_width_px = sobel_result.get("median_width_px")
+
+        if contour_width and sobel_width_px:
+            diff_pct = abs(sobel_width_px - contour_width) / contour_width * 100
+
+            if diff_pct > max_difference_pct:
+                return False, f"disagrees_with_contour_{diff_pct:.1f}pct"
+
+    # All checks passed
+    return True, "quality_acceptable"
 
 
 def refine_edges_sobel(
@@ -586,9 +877,16 @@ def refine_edges_sobel(
         expected_width_px=expected_width_px
     )
 
-    # Step 4: Measure width from edges
+    # Step 4: Measure width from edges (with sub-pixel refinement)
     width_data = measure_width_from_edges(
-        edge_data, roi_data, scale_px_per_cm
+        edge_data, roi_data, scale_px_per_cm,
+        gradient_data=gradient_data,
+        use_subpixel=True
+    )
+
+    # Step 5: Compute edge quality score
+    edge_quality = compute_edge_quality_score(
+        gradient_data, edge_data, width_data
     )
 
     # Calculate success rate
@@ -603,7 +901,9 @@ def refine_edges_sobel(
         "std_width_px": width_data["std_width_px"],
         "num_samples": width_data["num_samples"],
         "outliers_removed": width_data["outliers_removed"],
+        "subpixel_refinement_used": width_data["subpixel_refinement_used"],
         "edge_detection_success_rate": success_rate,
+        "edge_quality": edge_quality,
         "roi_data": roi_data,
         "gradient_data": gradient_data,
         "edge_data": edge_data,

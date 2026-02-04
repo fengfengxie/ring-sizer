@@ -5,11 +5,14 @@ This module handles:
 - Card detection confidence
 - Finger detection confidence
 - Measurement stability confidence
+- Edge quality confidence (v1)
 - Aggregate confidence calculation
 """
 
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Literal
+
+EdgeMethod = Literal["contour", "sobel", "sobel_fallback"]
 
 
 def compute_card_confidence(
@@ -146,18 +149,51 @@ def compute_measurement_confidence(
     return float(np.clip(measurement_conf, 0, 1))
 
 
+def compute_edge_quality_confidence(
+    edge_quality_data: Optional[Dict[str, Any]] = None
+) -> float:
+    """
+    Compute confidence score from edge quality (v1 Sobel method).
+
+    Args:
+        edge_quality_data: Output from compute_edge_quality_score()
+                          None if using contour method (v0)
+
+    Returns:
+        Edge quality confidence score [0, 1]
+        Returns 1.0 for contour method (not applicable)
+    """
+    if edge_quality_data is None:
+        # Contour method - edge quality not applicable
+        return 1.0
+
+    # Use overall edge quality score directly
+    # It's already a weighted combination of 4 metrics
+    edge_conf = edge_quality_data.get("overall_score", 0.0)
+
+    return float(np.clip(edge_conf, 0, 1))
+
+
 def compute_overall_confidence(
     card_confidence: float,
     finger_confidence: float,
     measurement_confidence: float,
+    edge_method: EdgeMethod = "contour",
+    edge_quality_confidence: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Compute overall confidence by combining component scores.
+
+    Supports both v0 (contour) and v1 (Sobel) confidence calculation:
+    - v0 (contour): 3 components (card, finger, measurement)
+    - v1 (sobel): 4 components (card, finger, edge quality, measurement)
 
     Args:
         card_confidence: Card detection confidence
         finger_confidence: Finger detection confidence
         measurement_confidence: Measurement stability confidence
+        edge_method: Edge detection method used
+        edge_quality_confidence: Edge quality confidence (v1 only)
 
     Returns:
         Dictionary containing:
@@ -165,15 +201,38 @@ def compute_overall_confidence(
         - card: Card component score
         - finger: Finger component score
         - measurement: Measurement component score
+        - edge_quality: Edge quality score (v1 only, None for v0)
         - level: "high", "medium", or "low"
+        - method: Edge method used
     """
-    # Weighted combination
-    # Card: 30%, Finger: 30%, Measurement: 40%
-    overall = (
-        0.3 * card_confidence +
-        0.3 * finger_confidence +
-        0.4 * measurement_confidence
-    )
+    result = {
+        "card": float(card_confidence),
+        "finger": float(finger_confidence),
+        "measurement": float(measurement_confidence),
+        "method": edge_method,
+    }
+
+    # Calculate overall confidence based on method
+    if edge_method == "sobel" and edge_quality_confidence is not None:
+        # v1 scoring: 4 components
+        # Card: 25%, Finger: 25%, Edge Quality: 20%, Measurement: 30%
+        overall = (
+            0.25 * card_confidence +
+            0.25 * finger_confidence +
+            0.20 * edge_quality_confidence +
+            0.30 * measurement_confidence
+        )
+        result["edge_quality"] = float(edge_quality_confidence)
+
+    else:
+        # v0 scoring: 3 components (contour method or sobel fallback)
+        # Card: 30%, Finger: 30%, Measurement: 40%
+        overall = (
+            0.30 * card_confidence +
+            0.30 * finger_confidence +
+            0.40 * measurement_confidence
+        )
+        result["edge_quality"] = None
 
     overall = float(np.clip(overall, 0, 1))
 
@@ -185,10 +244,7 @@ def compute_overall_confidence(
     else:
         level = "low"
 
-    return {
-        "overall": overall,
-        "card": float(card_confidence),
-        "finger": float(finger_confidence),
-        "measurement": float(measurement_confidence),
-        "level": level,
-    }
+    result["overall"] = overall
+    result["level"] = level
+
+    return result
