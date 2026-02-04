@@ -747,6 +747,11 @@ def draw_selected_edges(
                 cv2.circle(vis, (right_x, row_idx), 2, Color.MAGENTA, -1)
         
         # Add text annotations
+        # Scale font size based on ROI height for readability
+        font_scale = max(0.3, h / 600.0)  # Scale based on ROI height, min 0.3
+        line_height = int(15 + h / 40.0)  # Scale line spacing too
+        thickness = 1
+
         valid_pct = np.sum(valid_rows) / len(valid_rows) * 100
         text_lines = [
             f"Valid edges: {np.sum(valid_rows)}/{len(valid_rows)} ({valid_pct:.1f}%)",
@@ -755,13 +760,13 @@ def draw_selected_edges(
             f"Width: {np.min(valid_widths):.1f}-{np.max(valid_widths):.1f}px",
             f"Median: {median_width:.1f}px"
         ]
-        
+
         for i, text in enumerate(text_lines):
-            y = 30 + i * 30
+            y = line_height + i * line_height
             # Background for readability
-            (text_w, text_h), _ = cv2.getTextSize(text, FONT_FACE, FontScale.SMALL, FontThickness.BODY)
-            cv2.rectangle(vis, (10, y - text_h - 5), (10 + text_w + 10, y + 5), (0, 0, 0), -1)
-            cv2.putText(vis, text, (15, y), FONT_FACE, FontScale.SMALL, Color.WHITE, FontThickness.BODY)
+            (text_w, text_h), _ = cv2.getTextSize(text, FONT_FACE, font_scale, thickness)
+            cv2.rectangle(vis, (5, y - text_h - 2), (5 + text_w + 5, y + 2), (0, 0, 0), -1)
+            cv2.putText(vis, text, (8, y), FONT_FACE, font_scale, Color.WHITE, thickness)
     
     return vis
 
@@ -806,17 +811,22 @@ def draw_width_measurements(
             cv2.line(vis, (left_x, row_idx), (right_x, row_idx), color, 1)
     
     # Add median width annotation
+    # Scale font size based on ROI height
+    h = vis.shape[0]
+    font_scale = max(0.4, h / 500.0)
+    thickness = max(1, int(h / 150.0))
+
     median_cm = width_data["median_width_cm"]
     text = f"Median: {median_cm:.2f} cm ({median_width_px:.1f} px)"
     cv2.putText(
-        vis, text, (10, 30),
-        FONT_FACE, FontScale.BODY,
-        Color.BLACK, FontThickness.SUBTITLE_OUTLINE
+        vis, text, (10, int(h * 0.15)),
+        FONT_FACE, font_scale,
+        Color.BLACK, thickness + 2
     )
     cv2.putText(
-        vis, text, (10, 30),
-        FONT_FACE, FontScale.BODY,
-        Color.GREEN, FontThickness.BODY
+        vis, text, (10, int(h * 0.15)),
+        FONT_FACE, font_scale,
+        Color.GREEN, thickness
     )
     
     return vis
