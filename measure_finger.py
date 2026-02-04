@@ -256,14 +256,45 @@ def measure_finger(
             print(f"  Warning: {issue}")
         return create_output(fail_reason=quality["fail_reason"])
 
-    # Phase 3: Credit card detection & scale calibration
+    # Phase 3: Hand & finger segmentation (MOVED BEFORE CARD DETECTION)
+    # This allows us to rotate the image to canonical orientation first
+    # Create finger segmentation debug subdirectory if debug enabled
+    finger_debug_dir = None
+    if debug_path is not None:
+        from pathlib import Path
+        finger_debug_dir = str(Path(debug_path).parent / "finger_segmentation_debug")
+
+    hand_data = segment_hand(image, debug_dir=finger_debug_dir)
+
+    if hand_data is None:
+        print("No hand detected in image")
+        return create_output(
+            card_detected=False,  # Card not yet detected
+            finger_detected=False,
+            fail_reason="hand_not_detected",
+        )
+
+    print(f"Hand detected: {hand_data['handedness']}, confidence={hand_data['confidence']:.2f}")
+    if "orientation_rotation" in hand_data:
+        print(f"Hand orientation normalized: {hand_data['orientation_rotation']}° rotation applied")
+    
+    # Use canonical image for all downstream processing
+    # This ensures finger edges are vertical for optimal Sobel detection
+    if "canonical_image" in hand_data:
+        image_canonical = hand_data["canonical_image"]
+        print(f"Using canonical orientation image: {image_canonical.shape[1]}x{image_canonical.shape[0]}")
+    else:
+        image_canonical = image  # Fallback if not available
+        print("Warning: Canonical image not available, using original")
+
+    # Phase 4: Credit card detection & scale calibration (NOW ON CANONICAL IMAGE)
     # Create card detection debug subdirectory if debug enabled
     card_debug_dir = None
     if debug_path is not None:
         from pathlib import Path
         card_debug_dir = str(Path(debug_path).parent / "card_detection_debug")
 
-    card_result = detect_credit_card(image, debug_dir=card_debug_dir)
+    card_result = detect_credit_card(image_canonical, debug_dir=card_debug_dir)
 
     if card_result is None:
         print("Credit card not detected in image")
@@ -281,31 +312,10 @@ def measure_finger(
     # Check for excessive perspective distortion (view angle)
     view_angle_ok = scale_confidence > 0.9
 
-    # Phase 4: Hand & finger segmentation
-    # Create finger segmentation debug subdirectory if debug enabled
-    finger_debug_dir = None
-    if debug_path is not None:
-        from pathlib import Path
-        finger_debug_dir = str(Path(debug_path).parent / "finger_segmentation_debug")
-
-    hand_data = segment_hand(image, debug_dir=finger_debug_dir)
-
-    if hand_data is None:
-        print("No hand detected in image")
-        return create_output(
-            card_detected=True,
-            finger_detected=False,
-            scale_px_per_cm=px_per_cm,
-            view_angle_ok=view_angle_ok,
-            fail_reason="hand_not_detected",
-        )
-
-    print(f"Hand detected: {hand_data['handedness']}, confidence={hand_data['confidence']:.2f}")
-
-    # Isolate the target finger
-    h, w = image.shape[:2]
-    finger_data = isolate_finger(hand_data, finger=finger_index, image_shape=(h, w),
-                                 image=image, debug_dir=finger_debug_dir)
+    # Phase 5: Finger isolation (hand already segmented in Phase 3)
+    h_can, w_can = image_canonical.shape[:2]
+    finger_data = isolate_finger(hand_data, finger=finger_index, image_shape=(h_can, w_can),
+                                 image=image_canonical, debug_dir=finger_debug_dir)
 
     if finger_data is None:
         print(f"Could not isolate finger: {finger_index}")
@@ -422,7 +432,7 @@ def measure_finger(
                 edge_debug_dir = str(Path(debug_path).parent / "edge_refinement_debug")
             
             sobel_measurement = refine_edges_sobel(
-                image=image,
+                image=image_canonical,  # Use canonical orientation
                 axis_data=axis_data,
                 zone_data=zone_data,
                 scale_px_per_cm=px_per_cm,
@@ -562,7 +572,7 @@ def measure_finger(
     if debug_path is not None:
         print(f"Generating debug visualization...")
         debug_image = create_debug_visualization(
-            image=image,
+            image=image_canonical,  # Use canonical orientation
             card_result=card_result,
             contour=contour,
             axis_data=axis_data,
@@ -576,7 +586,8 @@ def measure_finger(
         # Save debug image
         Path(debug_path).parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(debug_path, debug_image)
-        print(f"Debug visualization saved to: {debug_path}")
+        print(f"Debug visualization saved to: {debug_path} (canonical orientation)")
+
 
     return create_output(
         finger_diameter_cm=median_width_cm,

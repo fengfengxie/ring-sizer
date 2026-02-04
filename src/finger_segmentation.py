@@ -162,6 +162,136 @@ def _transform_landmarks_for_rotation(
     return landmarks
 
 
+def detect_hand_orientation(landmarks_normalized: np.ndarray) -> float:
+    """
+    Detect hand orientation angle from vertical (canonical orientation).
+    
+    Canonical orientation: wrist at bottom, fingers pointing upward.
+    
+    Args:
+        landmarks_normalized: MediaPipe hand landmarks (21x2) in normalized [0-1] coordinates
+    
+    Returns:
+        Angle in degrees to rotate image clockwise to achieve canonical orientation.
+        Returns one of: 0, 90, 180, 270
+    """
+    # Get wrist (landmark 0) and middle finger tip (landmark 12)
+    wrist = landmarks_normalized[WRIST_LANDMARK]
+    middle_tip = landmarks_normalized[FINGER_LANDMARKS["middle"][3]]
+    
+    # Compute vector from wrist to fingertip
+    direction = middle_tip - wrist
+    
+    # Compute angle from vertical upward direction
+    # In image coordinates: y increases downward, x increases rightward
+    # Vertical upward = (0, -1) in (x, y)
+    # angle = atan2(cross, dot) where cross = dx*(-1) - dy*0, dot = dx*0 + dy*(-1)
+    angle_rad = np.arctan2(direction[0], -direction[1])
+    angle_deg = angle_rad * 180.0 / np.pi
+    
+    # angle_deg is now in range [-180, 180]:
+    # 0° = fingers pointing up (canonical)
+    # 90° = fingers pointing right
+    # 180° = fingers pointing down
+    # -90° = fingers pointing left
+    
+    # Convert to [0, 360] range
+    if angle_deg < 0:
+        angle_deg += 360
+    
+    # Snap to nearest 90° increment
+    # We want to return how much to rotate CW to get to canonical (0°)
+    rotation_needed = _snap_to_orthogonal(angle_deg)
+    
+    return rotation_needed
+
+
+def _snap_to_orthogonal(angle_deg: float) -> int:
+    """
+    Snap angle to nearest orthogonal rotation (0, 90, 180, 270).
+    
+    Args:
+        angle_deg: Angle in degrees [0, 360]
+    
+    Returns:
+        Rotation needed in degrees (0, 90, 180, 270) to rotate CW to canonical orientation
+    """
+    # If angle is 0±45°, no rotation needed
+    # If angle is 90±45°, need to rotate 270° CW (or 90° CCW) to get to 0°
+    # If angle is 180±45°, need to rotate 180°
+    # If angle is 270±45°, need to rotate 90° CW
+    
+    # Determine which quadrant (with 45° tolerance)
+    if angle_deg < 45 or angle_deg >= 315:
+        return 0  # Already upright
+    elif 45 <= angle_deg < 135:
+        return 270  # Pointing right, rotate 270° CW (= 90° CCW)
+    elif 135 <= angle_deg < 225:
+        return 180  # Upside down, rotate 180°
+    else:  # 225 <= angle_deg < 315
+        return 90   # Pointing left, rotate 90° CW
+
+
+def normalize_hand_orientation(
+    image: np.ndarray,
+    landmarks_normalized: np.ndarray,
+    debug_observer: Optional[DebugObserver] = None,
+) -> Tuple[np.ndarray, int]:
+    """
+    Rotate image to canonical hand orientation (wrist at bottom, fingers up).
+    
+    Args:
+        image: Input BGR image
+        landmarks_normalized: MediaPipe landmarks in normalized [0-1] coordinates
+        debug_observer: Optional debug observer for visualization
+    
+    Returns:
+        Tuple of (rotated_image, rotation_angle_degrees)
+        rotation_angle_degrees is one of: 0, 90, 180, 270
+    """
+    # Detect hand orientation
+    rotation_needed = detect_hand_orientation(landmarks_normalized)
+    
+    # Debug: Draw orientation detection
+    if debug_observer:
+        wrist = landmarks_normalized[WRIST_LANDMARK]
+        middle_tip = landmarks_normalized[FINGER_LANDMARKS["middle"][3]]
+        
+        # Convert to pixel coordinates
+        h, w = image.shape[:2]
+        wrist_px = (int(wrist[0] * w), int(wrist[1] * h))
+        tip_px = (int(middle_tip[0] * w), int(middle_tip[1] * h))
+        
+        debug_img = image.copy()
+        
+        # Draw direction arrow
+        cv2.arrowedLine(debug_img, wrist_px, tip_px, (0, 255, 255), 3, tipLength=0.3)
+        
+        # Draw text annotation
+        text = f"Detected: {int((360 - rotation_needed) % 360)}deg from vertical"
+        text2 = f"Rotation needed: {rotation_needed}deg CW"
+        cv2.putText(debug_img, text, (20, 40), FONT_FACE, 
+                   FontScale.LABEL, Color.YELLOW, FontThickness.LABEL)
+        cv2.putText(debug_img, text2, (20, 80), FONT_FACE,
+                   FontScale.LABEL, Color.CYAN, FontThickness.LABEL)
+        
+        debug_observer.save_stage("02a_orientation_detection", debug_img)
+    
+    # Rotate image if needed
+    if rotation_needed == 0:
+        return image, 0
+    elif rotation_needed == 90:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE), 90
+    elif rotation_needed == 180:
+        return cv2.rotate(image, cv2.ROTATE_180), 180
+    elif rotation_needed == 270:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE), 270
+    else:
+        # Shouldn't happen, but return original as fallback
+        print(f"Warning: Unexpected rotation angle {rotation_needed}, skipping rotation")
+        return image, 0
+
+
 def segment_hand(
     image: np.ndarray,
     max_dimension: int = 1280,
@@ -233,36 +363,99 @@ def segment_hand(
         [lm.x, lm.y] for lm in hand_landmarks
     ])
 
-    # Transform landmarks back to original orientation
-    landmarks = _transform_landmarks_for_rotation(
-        landmarks_normalized_rotated, rotation_code, h, w
+    # NEW: Normalize hand orientation to canonical (wrist at bottom, fingers up)
+    # This is done in the detected-rotation space first
+    if rotation_code == 1:
+        # Was rotated 90 CW
+        rotated_image = cv2.rotate(resized, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation_code == 2:
+        # Was rotated 180
+        rotated_image = cv2.rotate(resized, cv2.ROTATE_180)
+    elif rotation_code == 3:
+        # Was rotated 90 CCW
+        rotated_image = cv2.rotate(resized, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    else:
+        rotated_image = resized
+    
+    # Now normalize orientation based on hand direction
+    canonical_image, orientation_rotation = normalize_hand_orientation(
+        rotated_image, landmarks_normalized_rotated, observer
     )
+    
+    # Update landmarks for orientation normalization
+    if orientation_rotation != 0:
+        rot_h, rot_w = rotated_image.shape[:2]
+        landmarks_px_rotated = landmarks_normalized_rotated.copy()
+        landmarks_px_rotated[:, 0] *= rot_w
+        landmarks_px_rotated[:, 1] *= rot_h
+        
+        # Apply rotation transform to landmarks
+        if orientation_rotation == 90:
+            # Rotate 90 CW: (x, y) -> (h-1-y, x)
+            new_landmarks = np.zeros_like(landmarks_px_rotated)
+            new_landmarks[:, 0] = rot_h - 1 - landmarks_px_rotated[:, 1]
+            new_landmarks[:, 1] = landmarks_px_rotated[:, 0]
+            landmarks_px_canonical = new_landmarks
+        elif orientation_rotation == 180:
+            # Rotate 180: (x, y) -> (w-1-x, h-1-y)
+            new_landmarks = np.zeros_like(landmarks_px_rotated)
+            new_landmarks[:, 0] = rot_w - 1 - landmarks_px_rotated[:, 0]
+            new_landmarks[:, 1] = rot_h - 1 - landmarks_px_rotated[:, 1]
+            landmarks_px_canonical = new_landmarks
+        elif orientation_rotation == 270:
+            # Rotate 90 CCW: (x, y) -> (y, w-1-x)
+            new_landmarks = np.zeros_like(landmarks_px_rotated)
+            new_landmarks[:, 0] = landmarks_px_rotated[:, 1]
+            new_landmarks[:, 1] = rot_w - 1 - landmarks_px_rotated[:, 0]
+            landmarks_px_canonical = new_landmarks
+        else:
+            landmarks_px_canonical = landmarks_px_rotated
+        
+        # Update normalized landmarks for canonical image
+        can_h, can_w = canonical_image.shape[:2]
+        landmarks_normalized_canonical = landmarks_px_canonical.copy()
+        landmarks_normalized_canonical[:, 0] /= can_w
+        landmarks_normalized_canonical[:, 1] /= can_h
+    else:
+        landmarks_normalized_canonical = landmarks_normalized_rotated
+    
+    # Scale landmarks back to original resolution if needed
+    if scale != 1.0:
+        canonical_full = cv2.resize(canonical_image, (int(canonical_image.shape[1] / scale), 
+                                                      int(canonical_image.shape[0] / scale)),
+                                   interpolation=cv2.INTER_CUBIC)
+    else:
+        canonical_full = canonical_image
+    
+    # Final landmarks in canonical full resolution
+    can_full_h, can_full_w = canonical_full.shape[:2]
+    landmarks_canonical = landmarks_normalized_canonical.copy()
+    landmarks_canonical[:, 0] *= can_full_w
+    landmarks_canonical[:, 1] *= can_full_h
 
-    # Compute normalized landmarks for original orientation
-    landmarks_normalized = landmarks.copy()
-    landmarks_normalized[:, 0] /= w
-    landmarks_normalized[:, 1] /= h
-
-    # Debug: Draw landmarks overlay
+    # Debug: Draw landmarks overlay in canonical orientation
     if observer:
-        observer.draw_and_save("03_landmarks_overlay", image,
-                             draw_landmarks_overlay, landmarks, label=True)
-        observer.draw_and_save("04_hand_skeleton", image,
-                             draw_hand_skeleton, landmarks)
-        observer.draw_and_save("05_detection_info", image,
+        observer.draw_and_save("03_landmarks_overlay_canonical", canonical_full,
+                             draw_landmarks_overlay, landmarks_canonical, label=True)
+        observer.draw_and_save("04_hand_skeleton_canonical", canonical_full,
+                             draw_hand_skeleton, landmarks_canonical)
+        observer.draw_and_save("05_detection_info_canonical", canonical_full,
                              draw_detection_info, handedness[0].score,
-                             handedness[0].category_name, rotation_code)
+                             handedness[0].category_name, 
+                             f"det={rotation_code}, orient={orientation_rotation}")
 
-    # Generate hand mask at original resolution
-    mask = _create_hand_mask(landmarks, (h, w), observer)
+    # Generate hand mask at canonical resolution
+    mask = _create_hand_mask(landmarks_canonical, (can_full_h, can_full_w), observer)
 
     return {
-        "landmarks": landmarks,
-        "landmarks_normalized": landmarks_normalized,
+        "landmarks": landmarks_canonical,
+        "landmarks_normalized": landmarks_normalized_canonical,
         "mask": mask,
         "confidence": handedness[0].score,
         "handedness": handedness[0].category_name,
         "rotation_applied": rotation_code,
+        "orientation_rotation": orientation_rotation,
+        "canonical_image": canonical_full,  # Return the canonical image for downstream processing
     }
 
 
