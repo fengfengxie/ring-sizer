@@ -674,7 +674,6 @@ def _isolate_finger_from_hand_mask(
     finger_landmarks: np.ndarray,
     all_landmarks: np.ndarray,
     min_area: int = 500,
-    observer: Optional[DebugObserver] = None,
 ) -> Optional[np.ndarray]:
     """
     Isolate finger using pixel-level intersection of hand mask with finger ROI.
@@ -687,7 +686,6 @@ def _isolate_finger_from_hand_mask(
         finger_landmarks: 4x2 array of finger landmarks
         all_landmarks: 21x2 array of all hand landmarks
         min_area: Minimum valid finger area
-        observer: Optional debug observer for debug images
 
     Returns:
         Binary finger mask, or None if isolation fails
@@ -697,17 +695,9 @@ def _isolate_finger_from_hand_mask(
     # Create ROI mask around finger
     roi_mask = _create_finger_roi_mask(finger_landmarks, all_landmarks, (h, w))
 
-    # Debug: Save ROI mask
-    if observer:
-        observer.save_stage("15a_finger_roi_mask", roi_mask)
-
     # Intersect hand mask with finger ROI
     # This preserves real pixel-level edges from MediaPipe
     finger_mask = cv2.bitwise_and(hand_mask, roi_mask)
-
-    # Debug: Save intersection (before component selection)
-    if observer:
-        observer.save_stage("15b_roi_hand_intersection", finger_mask)
 
     # Find connected components to remove fragments from other fingers
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
@@ -716,15 +706,6 @@ def _isolate_finger_from_hand_mask(
 
     if num_labels <= 1:
         return None
-
-    # Debug: Visualize all components
-    if observer:
-        components_vis = np.zeros((h, w, 3), dtype=np.uint8)
-        colors = np.random.randint(50, 255, size=(num_labels, 3), dtype=np.uint8)
-        colors[0] = [0, 0, 0]  # Background is black
-        for i in range(1, num_labels):
-            components_vis[labels == i] = colors[i]
-        observer.save_stage("15c_all_components", components_vis)
 
     # Select component closest to finger landmarks centroid
     landmarks_centroid = np.mean(finger_landmarks, axis=0)
@@ -750,10 +731,6 @@ def _isolate_finger_from_hand_mask(
     # Create final mask with only the selected component
     final_mask = np.zeros_like(finger_mask)
     final_mask[labels == best_component] = 255
-
-    # Debug: Save selected component
-    if observer:
-        observer.save_stage("15d_selected_component", final_mask)
 
     return final_mask
 
@@ -854,7 +831,6 @@ def isolate_finger(
             finger_landmarks,
             landmarks,
             min_area=500,
-            observer=observer
         )
 
         if mask_pixel is not None:
@@ -1084,7 +1060,6 @@ def _create_finger_mask(
 def clean_mask(
     mask: np.ndarray,
     min_area: int = 1000,
-    debug_dir: Optional[str] = None,
 ) -> Optional[np.ndarray]:
     """
     Clean a binary mask by extracting largest component and applying morphology.
@@ -1092,14 +1067,10 @@ def clean_mask(
     Args:
         mask: Input binary mask
         min_area: Minimum valid area in pixels
-        debug_dir: Optional directory to save debug images
 
     Returns:
         Cleaned binary mask, or None if no valid component found
     """
-    # Create debug observer if debug mode enabled
-    observer = DebugObserver(debug_dir) if debug_dir else None
-    
     if mask is None or mask.size == 0:
         return None
 
@@ -1122,40 +1093,19 @@ def clean_mask(
     if largest_area < min_area:
         return None
 
-    # Debug: Visualize connected components
-    if observer:
-        # Create a dummy color image for visualization
-        h, w = mask.shape
-        comp_img = np.zeros((h, w, 3), dtype=np.uint8)
-        observer.draw_and_save("19_connected_components", comp_img,
-                             draw_component_stats, labels, stats, largest_idx)
-
     # Create mask with only the largest component
     cleaned = np.zeros_like(mask)
     cleaned[labels == largest_idx] = 255
-
-    # Debug: Save largest component
-    if observer:
-        observer.save_stage("20_largest_component", cleaned)
 
     # Apply morphological smoothing
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
 
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
-    if observer:
-        observer.save_stage("21_morph_close", cleaned)
-
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel)
-    if observer:
-        observer.save_stage("22_morph_open", cleaned)
 
     # Smooth edges with Gaussian blur and re-threshold
     cleaned = cv2.GaussianBlur(cleaned, (5, 5), 0)
     _, cleaned = cv2.threshold(cleaned, 127, 255, cv2.THRESH_BINARY)
-
-    if observer:
-        observer.save_stage("23_gaussian_blur", cleaned)
-        observer.save_stage("24_final_cleaned_mask", cleaned)
 
     return cleaned
 

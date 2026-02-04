@@ -348,7 +348,7 @@ def measure_finger(
     print(f"Finger isolated: {finger_data['finger_name']}")
 
     # Clean the finger mask
-    cleaned_mask = clean_mask(finger_data["mask"], debug_dir=finger_debug_dir)
+    cleaned_mask = clean_mask(finger_data["mask"])
 
     if cleaned_mask is None:
         print("Finger mask too small or invalid")

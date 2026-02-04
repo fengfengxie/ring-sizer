@@ -241,10 +241,6 @@ final_mask = (labels == best_component)
 
 **Debug Output:**
 - `14_selected_finger_landmarks.png` - 4 finger landmarks (MCP, PIP, DIP, TIP)
-- `15a_finger_roi_mask.png` - ROI boundary around finger
-- `15b_roi_hand_intersection.png` - Hand mask ∩ ROI (before component selection)
-- `15c_all_components.png` - All connected components colored
-- `15d_selected_component.png` - Final selected finger component
 
 ---
 
@@ -350,14 +346,6 @@ _, cleaned = cv2.threshold(cleaned, 127, 255, cv2.THRESH_BINARY)
 ```
 
 **Purpose:** Smooth sharp edges from morphology operations.
-
-**Debug Output:**
-- `19_connected_components.png` - Component analysis with areas
-- `20_largest_component.png` - Selected component
-- `21_morph_close.png` - After closing
-- `22_morph_open.png` - After opening
-- `23_gaussian_blur.png` - After blur + threshold
-- `24_final_cleaned_mask.png` - Clean mask ready for contour
 
 ---
 
@@ -565,7 +553,7 @@ finger_confidence = weighted_average([
 
 ## Debug Output Summary
 
-**Total:** 27 debug images (if both methods succeed)
+**Total:** 14 debug images (if both methods succeed)
 
 ### **Phase A: Hand Detection (5 images)**
 - 01: Original input
@@ -582,30 +570,18 @@ finger_confidence = weighted_average([
 - 11: After morph open
 - 12: Final hand mask
 
-### **Phase C: Pixel-Level Isolation (6 images)**
+### **Phase C: Finger Isolation (2 images)**
 - 13: Extension scores
-- 14: Selected landmarks
-- 15a: ROI mask
-- 15b: ROI ∩ hand mask
-- 15c: Connected components
-- 15d: Selected component
+- 14: Selected finger landmarks
 
-### **Phase D: Polygon Fallback (3 images)** *(debug only)*
+### **Phase D: Polygon Fallback (3 images)** *(debug only, if pixel-level fails)*
 - 15: Polygon construction
 - 16: Palm extension
 - 17: Raw polygon mask
 
-### **Phase E: Method Comparison (2 images)**
+### **Phase E: Method Comparison (2 images)** *(if both methods available)*
 - 17a: Pixel vs polygon overlay
 - 18: Final mask (color-coded by method)
-
-### **Phase F: Mask Cleaning (6 images)**
-- 19: Connected components
-- 20: Largest component
-- 21: After morph close
-- 22: After morph open
-- 23: After Gaussian blur
-- 24: Final cleaned mask
 
 ---
 
