@@ -817,10 +817,12 @@ def refine_edges_sobel(
     zone_data: Dict[str, Any],
     scale_px_per_cm: float,
     finger_mask: Optional[np.ndarray] = None,
+    finger_landmarks: Optional[np.ndarray] = None,
     sobel_threshold: float = 15.0,
     kernel_size: int = 3,
     rotate_align: bool = False,
     expected_width_px: Optional[float] = None,
+    debug_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Main entry point for Sobel-based edge refinement.
@@ -839,10 +841,13 @@ def refine_edges_sobel(
         axis_data: Output from estimate_finger_axis()
         zone_data: Output from localize_ring_zone()
         scale_px_per_cm: Pixels per cm from card detection
+        finger_mask: Optional finger mask for constrained detection
+        finger_landmarks: Optional 4x2 array of finger landmarks for debug
         sobel_threshold: Minimum gradient magnitude for valid edge
         kernel_size: Sobel kernel size (3, 5, or 7)
         rotate_align: Rotate ROI for vertical finger alignment
         expected_width_px: Expected width for validation (optional)
+        debug_dir: Directory to save debug visualizations (None to skip)
 
     Returns:
         Dictionary containing:
@@ -856,12 +861,36 @@ def refine_edges_sobel(
         - edge_data: Edge detection data
         - method: "sobel"
     """
+    # Initialize debug observer if debug_dir provided
+    if debug_dir:
+        from src.debug_observer import DebugObserver, draw_landmark_axis, draw_ring_zone_roi
+        from src.debug_observer import draw_roi_extraction, draw_gradient_visualization
+        from src.debug_observer import draw_edge_candidates, draw_selected_edges
+        from src.debug_observer import draw_width_measurements, draw_outlier_detection
+        observer = DebugObserver(debug_dir)
+    
+    # Stage A: Axis & Zone Visualization
+    if debug_dir:
+        # A.1: Landmark axis
+        observer.draw_and_save("01_landmark_axis", image, draw_landmark_axis, axis_data, finger_landmarks)
+        
+        # A.2: Ring zone + ROI bounds (need to extract bounds first)
+        # We'll save this after ROI extraction
+    
     # Step 1: Extract ROI
     roi_data = extract_ring_zone_roi(
         image, axis_data, zone_data,
         finger_mask=finger_mask,
         padding=50, rotate_align=rotate_align
     )
+    
+    if debug_dir:
+        # A.2: Ring zone + ROI bounds
+        roi_bounds = roi_data["roi_bounds"]
+        observer.draw_and_save("02_ring_zone_roi", image, draw_ring_zone_roi, zone_data, roi_bounds)
+        
+        # A.3: ROI extraction
+        observer.draw_and_save("03_roi_extraction", roi_data["roi_image"], draw_roi_extraction, roi_data.get("roi_mask"))
 
     # Step 2: Apply Sobel filters
     gradient_data = apply_sobel_filters(
@@ -869,6 +898,20 @@ def refine_edges_sobel(
         kernel_size=kernel_size,
         axis_direction="auto"
     )
+    
+    if debug_dir:
+        # Stage B: Sobel Filtering
+        # B.1: Left-to-right gradient
+        grad_left = draw_gradient_visualization(gradient_data["gradient_x"], cv2.COLORMAP_JET)
+        observer.save_stage("04_sobel_left_to_right", grad_left)
+        
+        # B.2: Right-to-left gradient
+        grad_right = draw_gradient_visualization(-gradient_data["gradient_x"], cv2.COLORMAP_JET)
+        observer.save_stage("05_sobel_right_to_left", grad_right)
+        
+        # B.3: Gradient magnitude
+        grad_mag = draw_gradient_visualization(gradient_data["gradient_magnitude"], cv2.COLORMAP_HOT)
+        observer.save_stage("06_gradient_magnitude", grad_mag)
 
     # Step 3: Detect edges per row
     edge_data = detect_edges_per_row(
@@ -876,6 +919,14 @@ def refine_edges_sobel(
         threshold=sobel_threshold,
         expected_width_px=expected_width_px
     )
+    
+    if debug_dir:
+        # B.4: Edge candidates
+        observer.draw_and_save("07_edge_candidates", roi_data["roi_image"], 
+                             draw_edge_candidates, gradient_data["gradient_magnitude"], sobel_threshold)
+        
+        # B.5: Selected edges
+        observer.draw_and_save("08_selected_edges", roi_data["roi_image"], draw_selected_edges, edge_data)
 
     # Step 4: Measure width from edges (with sub-pixel refinement)
     width_data = measure_width_from_edges(
@@ -883,6 +934,25 @@ def refine_edges_sobel(
         gradient_data=gradient_data,
         use_subpixel=True
     )
+    
+    if debug_dir:
+        # Stage C: Measurement
+        # C.1: Sub-pixel refinement (use selected edges for now)
+        observer.draw_and_save("09_subpixel_refinement", roi_data["roi_image"], draw_selected_edges, edge_data)
+        
+        # C.2: Width measurements
+        observer.draw_and_save("10_width_measurements", roi_data["roi_image"], 
+                             draw_width_measurements, edge_data, width_data)
+        
+        # C.3: Width distribution (histogram - requires matplotlib)
+        try:
+            _save_width_distribution(width_data, debug_dir)
+        except:
+            pass  # Skip if matplotlib not available
+        
+        # C.4: Outlier detection
+        observer.draw_and_save("12_outlier_detection", roi_data["roi_image"], 
+                             draw_outlier_detection, edge_data, width_data)
 
     # Step 5: Compute edge quality score
     edge_quality = compute_edge_quality_score(
@@ -907,8 +977,44 @@ def refine_edges_sobel(
         "roi_data": roi_data,
         "gradient_data": gradient_data,
         "edge_data": edge_data,
+        "width_data": width_data,
         "method": "sobel",
     }
+
+
+def _save_width_distribution(width_data: Dict[str, Any], debug_dir: str) -> None:
+    """Helper to save width distribution histogram."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import os
+    except ImportError:
+        return
+    
+    widths_px = width_data.get("widths_px", [])
+    if len(widths_px) == 0:
+        return
+    
+    median_width_px = width_data["median_width_px"]
+    mean_width_px = width_data["mean_width_px"]
+    
+    # Create histogram
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(widths_px, bins=30, color='skyblue', edgecolor='black', alpha=0.7)
+    ax.axvline(median_width_px, color='red', linestyle='--', linewidth=2, label=f'Median: {median_width_px:.1f} px')
+    ax.axvline(mean_width_px, color='orange', linestyle='--', linewidth=2, label=f'Mean: {mean_width_px:.1f} px')
+    
+    ax.set_xlabel('Width (pixels)', fontsize=12)
+    ax.set_ylabel('Frequency', fontsize=12)
+    ax.set_title('Distribution of Cross-Section Widths', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    
+    # Save
+    output_path = os.path.join(debug_dir, "11_width_distribution.png")
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
 
 
 def compare_edge_methods(

@@ -499,3 +499,376 @@ def draw_candidates_with_scores(
     )
 
     return overlay
+
+
+# --- Edge Refinement Drawing Functions (v1 Phase 5) ---
+
+def draw_landmark_axis(
+    image: np.ndarray,
+    axis_data: Dict[str, Any],
+    finger_landmarks: Optional[np.ndarray]
+) -> np.ndarray:
+    """
+    Draw finger landmarks with axis overlay.
+    
+    Shows:
+    - 4 finger landmarks (MCP, PIP, DIP, TIP)
+    - Calculated finger axis
+    - Axis endpoints
+    - Landmark-based vs PCA method indicator
+    """
+    vis = image.copy()
+    
+    # Draw finger landmarks if available
+    if finger_landmarks is not None and len(finger_landmarks) == 4:
+        landmark_names = ["MCP", "PIP", "DIP", "TIP"]
+        for i, (landmark, name) in enumerate(zip(finger_landmarks, landmark_names)):
+            pt = tuple(landmark.astype(int))
+            # Draw landmark
+            cv2.circle(vis, pt, Size.ENDPOINT_RADIUS, Color.YELLOW, -1)
+            cv2.circle(vis, pt, Size.ENDPOINT_RADIUS, Color.BLACK, 2)
+            # Draw label
+            cv2.putText(
+                vis, name, (pt[0] + 20, pt[1] - 20),
+                FONT_FACE, FontScale.LABEL,
+                Color.BLACK, FontThickness.LABEL_OUTLINE
+            )
+            cv2.putText(
+                vis, name, (pt[0] + 20, pt[1] - 20),
+                FONT_FACE, FontScale.LABEL,
+                Color.YELLOW, FontThickness.LABEL
+            )
+    
+    # Draw axis line
+    center = axis_data["center"]
+    direction = axis_data["direction"]
+    length = axis_data["length"]
+    
+    start = center - direction * (length / 2.0)
+    end = center + direction * (length / 2.0)
+    
+    # Draw axis
+    cv2.line(
+        vis,
+        tuple(start.astype(int)),
+        tuple(end.astype(int)),
+        Color.CYAN, Size.LINE_THICK
+    )
+    
+    # Draw endpoints
+    cv2.circle(vis, tuple(start.astype(int)), Size.ENDPOINT_RADIUS, Color.CYAN, -1)
+    cv2.circle(vis, tuple(end.astype(int)), Size.ENDPOINT_RADIUS, Color.MAGENTA, -1)
+    
+    # Add method indicator
+    method = axis_data.get("method", "unknown")
+    text = f"Axis Method: {method}"
+    cv2.putText(
+        vis, text, (50, 100),
+        FONT_FACE, FontScale.TITLE,
+        Color.BLACK, FontThickness.TITLE_OUTLINE
+    )
+    cv2.putText(
+        vis, text, (50, 100),
+        FONT_FACE, FontScale.TITLE,
+        Color.CYAN, FontThickness.TITLE
+    )
+    
+    return vis
+
+
+def draw_ring_zone_roi(
+    image: np.ndarray,
+    zone_data: Dict[str, Any],
+    roi_bounds: Tuple[int, int, int, int]
+) -> np.ndarray:
+    """
+    Draw ring zone and ROI bounds.
+    
+    Shows:
+    - Ring-wearing zone band
+    - ROI bounding box
+    - Zone start/end points
+    """
+    vis = image.copy()
+    
+    # Draw ring zone
+    start_point = zone_data["start_point"]
+    end_point = zone_data["end_point"]
+    
+    cv2.circle(vis, tuple(start_point.astype(int)), Size.ENDPOINT_RADIUS, Color.GREEN, -1)
+    cv2.circle(vis, tuple(end_point.astype(int)), Size.ENDPOINT_RADIUS, Color.RED, -1)
+    cv2.line(
+        vis,
+        tuple(start_point.astype(int)),
+        tuple(end_point.astype(int)),
+        Color.YELLOW, Size.LINE_THICK * 2
+    )
+    
+    # Draw ROI bounding box
+    x_min, y_min, x_max, y_max = roi_bounds
+    cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), Color.GREEN, Size.LINE_THICK)
+    
+    # Add labels
+    text = "Ring Zone + ROI Bounds"
+    cv2.putText(
+        vis, text, (50, 100),
+        FONT_FACE, FontScale.TITLE,
+        Color.BLACK, FontThickness.TITLE_OUTLINE
+    )
+    cv2.putText(
+        vis, text, (50, 100),
+        FONT_FACE, FontScale.TITLE,
+        Color.GREEN, FontThickness.TITLE
+    )
+    
+    return vis
+
+
+def draw_roi_extraction(
+    roi_image: np.ndarray,
+    roi_mask: Optional[np.ndarray]
+) -> np.ndarray:
+    """
+    Draw extracted ROI with optional mask overlay.
+    """
+    # Convert grayscale to BGR for visualization
+    if len(roi_image.shape) == 2:
+        vis = cv2.cvtColor(roi_image, cv2.COLOR_GRAY2BGR)
+    else:
+        vis = roi_image.copy()
+    
+    # Overlay mask if available
+    if roi_mask is not None:
+        mask_colored = np.zeros_like(vis)
+        mask_colored[:, :, 1] = roi_mask  # Green channel
+        vis = cv2.addWeighted(vis, 0.7, mask_colored, 0.3, 0)
+    
+    return vis
+
+
+def draw_gradient_visualization(
+    gradient: np.ndarray,
+    colormap: int = cv2.COLORMAP_JET
+) -> np.ndarray:
+    """
+    Visualize gradient with color mapping.
+    """
+    grad_vis = np.clip(gradient, 0, 255).astype(np.uint8)
+    return cv2.applyColorMap(grad_vis, colormap)
+
+
+def draw_edge_candidates(
+    roi_image: np.ndarray,
+    gradient_magnitude: np.ndarray,
+    threshold: float
+) -> np.ndarray:
+    """
+    Draw all pixels above gradient threshold.
+    """
+    # Convert ROI to BGR
+    if len(roi_image.shape) == 2:
+        vis = cv2.cvtColor(roi_image, cv2.COLOR_GRAY2BGR)
+    else:
+        vis = roi_image.copy()
+    
+    # Find edge candidates
+    candidates = gradient_magnitude > threshold
+    
+    # Overlay candidates in cyan
+    vis[candidates] = Color.CYAN
+    
+    return vis
+
+
+def draw_selected_edges(
+    roi_image: np.ndarray,
+    edge_data: Dict[str, Any]
+) -> np.ndarray:
+    """
+    Draw final selected left/right edges.
+    """
+    # Convert ROI to BGR
+    if len(roi_image.shape) == 2:
+        vis = cv2.cvtColor(roi_image, cv2.COLOR_GRAY2BGR)
+    else:
+        vis = roi_image.copy()
+    
+    left_edges = edge_data["left_edges"]
+    right_edges = edge_data["right_edges"]
+    valid_rows = edge_data["valid_rows"]
+    
+    # Draw edges
+    for row_idx, valid in enumerate(valid_rows):
+        if valid:
+            # Draw left edge
+            left_x = int(left_edges[row_idx])
+            cv2.circle(vis, (left_x, row_idx), 3, Color.CYAN, -1)
+            
+            # Draw right edge
+            right_x = int(right_edges[row_idx])
+            cv2.circle(vis, (right_x, row_idx), 3, Color.MAGENTA, -1)
+    
+    return vis
+
+
+def draw_width_measurements(
+    roi_image: np.ndarray,
+    edge_data: Dict[str, Any],
+    width_data: Dict[str, Any]
+) -> np.ndarray:
+    """
+    Draw width measurements with connecting lines.
+    """
+    # Convert ROI to BGR
+    if len(roi_image.shape) == 2:
+        vis = cv2.cvtColor(roi_image, cv2.COLOR_GRAY2BGR)
+    else:
+        vis = roi_image.copy()
+    
+    left_edges = edge_data["left_edges"]
+    right_edges = edge_data["right_edges"]
+    valid_rows = edge_data["valid_rows"]
+    
+    median_width_px = width_data["median_width_px"]
+    
+    # Draw width lines
+    for row_idx, valid in enumerate(valid_rows):
+        if valid:
+            left_x = int(left_edges[row_idx])
+            right_x = int(right_edges[row_idx])
+            width_px = right_x - left_x
+            
+            # Color based on deviation from median
+            deviation = abs(width_px - median_width_px) / median_width_px
+            if deviation < 0.05:
+                color = Color.GREEN  # Close to median
+            elif deviation < 0.10:
+                color = Color.YELLOW  # Moderate deviation
+            else:
+                color = Color.RED  # Large deviation
+            
+            # Draw line
+            cv2.line(vis, (left_x, row_idx), (right_x, row_idx), color, 1)
+    
+    # Add median width annotation
+    median_cm = width_data["median_width_cm"]
+    text = f"Median: {median_cm:.2f} cm ({median_width_px:.1f} px)"
+    cv2.putText(
+        vis, text, (10, 30),
+        FONT_FACE, FontScale.BODY,
+        Color.BLACK, FontThickness.SUBTITLE_OUTLINE
+    )
+    cv2.putText(
+        vis, text, (10, 30),
+        FONT_FACE, FontScale.BODY,
+        Color.GREEN, FontThickness.BODY
+    )
+    
+    return vis
+
+
+def draw_outlier_detection(
+    roi_image: np.ndarray,
+    edge_data: Dict[str, Any],
+    width_data: Dict[str, Any]
+) -> np.ndarray:
+    """
+    Highlight outlier measurements.
+    """
+    # Convert ROI to BGR
+    if len(roi_image.shape) == 2:
+        vis = cv2.cvtColor(roi_image, cv2.COLOR_GRAY2BGR)
+    else:
+        vis = roi_image.copy()
+    
+    left_edges = edge_data["left_edges"]
+    right_edges = edge_data["right_edges"]
+    valid_rows = edge_data["valid_rows"]
+    
+    median_width_px = width_data["median_width_px"]
+    outliers_removed = width_data.get("outliers_removed", 0)
+    
+    # Calculate MAD threshold
+    all_widths = []
+    for row_idx, valid in enumerate(valid_rows):
+        if valid:
+            width_px = right_edges[row_idx] - left_edges[row_idx]
+            all_widths.append(width_px)
+    
+    if len(all_widths) > 0:
+        all_widths = np.array(all_widths)
+        mad = np.median(np.abs(all_widths - median_width_px))
+        outlier_threshold = 3.0 * mad
+        
+        # Draw width lines color-coded
+        for row_idx, valid in enumerate(valid_rows):
+            if valid:
+                left_x = int(left_edges[row_idx])
+                right_x = int(right_edges[row_idx])
+                width_px = right_x - left_x
+                
+                is_outlier = abs(width_px - median_width_px) > outlier_threshold
+                color = Color.RED if is_outlier else Color.GREEN
+                
+                cv2.line(vis, (left_x, row_idx), (right_x, row_idx), color, 2)
+    
+    # Add annotation
+    text = f"Outliers: {outliers_removed}"
+    cv2.putText(
+        vis, text, (10, 30),
+        FONT_FACE, FontScale.BODY,
+        Color.BLACK, FontThickness.SUBTITLE_OUTLINE
+    )
+    cv2.putText(
+        vis, text, (10, 30),
+        FONT_FACE, FontScale.BODY,
+        Color.RED, FontThickness.BODY
+    )
+    
+    return vis
+
+
+def draw_contour_vs_sobel(
+    image: np.ndarray,
+    finger_contour: np.ndarray,
+    edge_data: Dict[str, Any],
+    roi_bounds: Tuple[int, int, int, int]
+) -> np.ndarray:
+    """
+    Side-by-side comparison of contour vs Sobel edges.
+    """
+    vis = image.copy()
+    
+    # Draw contour (v0 method)
+    cv2.drawContours(vis, [finger_contour], -1, Color.GREEN, Size.CONTOUR_THICK)
+    
+    # Draw Sobel edges (v1 method)
+    x_min, y_min, x_max, y_max = roi_bounds
+    left_edges = edge_data["left_edges"]
+    right_edges = edge_data["right_edges"]
+    valid_rows = edge_data["valid_rows"]
+    
+    for row_idx, valid in enumerate(valid_rows):
+        if valid:
+            # Map ROI coordinates back to original image
+            global_y = y_min + row_idx
+            left_x_global = x_min + int(left_edges[row_idx])
+            right_x_global = x_min + int(right_edges[row_idx])
+            
+            # Draw edge points
+            cv2.circle(vis, (left_x_global, global_y), 2, Color.CYAN, -1)
+            cv2.circle(vis, (right_x_global, global_y), 2, Color.MAGENTA, -1)
+    
+    # Add legend
+    cv2.putText(
+        vis, "Green: Contour | Cyan/Magenta: Sobel Edges", (50, 100),
+        FONT_FACE, FontScale.TITLE,
+        Color.BLACK, FontThickness.TITLE_OUTLINE
+    )
+    cv2.putText(
+        vis, "Green: Contour | Cyan/Magenta: Sobel Edges", (50, 100),
+        FONT_FACE, FontScale.TITLE,
+        Color.WHITE, FontThickness.TITLE
+    )
+    
+    return vis

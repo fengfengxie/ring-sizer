@@ -415,14 +415,22 @@ def measure_finger(
     if edge_method in ["sobel", "auto", "compare"]:
         try:
             print(f"Running Sobel edge refinement (threshold={sobel_threshold}, kernel={sobel_kernel_size})...")
+            
+            # Create debug directory for edge refinement if main debug is enabled
+            edge_debug_dir = None
+            if debug_path is not None:
+                edge_debug_dir = str(Path(debug_path).parent / "edge_refinement_debug")
+            
             sobel_measurement = refine_edges_sobel(
                 image=image,
                 axis_data=axis_data,
                 zone_data=zone_data,
                 scale_px_per_cm=px_per_cm,
                 finger_mask=cleaned_mask,
+                finger_landmarks=finger_data.get("landmarks"),
                 sobel_threshold=sobel_threshold,
                 kernel_size=sobel_kernel_size,
+                debug_dir=edge_debug_dir,
             )
 
             sobel_width_cm = sobel_measurement["median_width_cm"]
@@ -559,7 +567,7 @@ def measure_finger(
             contour=contour,
             axis_data=axis_data,
             zone_data=zone_data,
-            width_data=width_data,
+            width_data=final_measurement,
             measurement_cm=median_width_cm,
             confidence=confidence_breakdown['overall'],
             scale_px_per_cm=px_per_cm,
