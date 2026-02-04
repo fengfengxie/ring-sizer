@@ -22,10 +22,12 @@ from src.image_quality import assess_image_quality
 from src.card_detection import detect_credit_card, compute_scale_factor
 from src.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
 from src.geometry import estimate_finger_axis, localize_ring_zone, compute_cross_section_width
+from src.edge_refinement import refine_edges_sobel, should_use_sobel_measurement, compare_edge_methods
 from src.confidence import (
     compute_card_confidence,
     compute_finger_confidence,
     compute_measurement_confidence,
+    compute_edge_quality_confidence,
     compute_overall_confidence,
 )
 from src.visualization import create_debug_visualization
@@ -87,6 +89,33 @@ Examples:
         help="Minimum confidence threshold (default: 0.7)",
     )
 
+    # v1 edge refinement options
+    parser.add_argument(
+        "--edge-method",
+        type=str,
+        default="auto",
+        choices=["auto", "contour", "sobel", "compare"],
+        help="Edge detection method: auto (quality-based), contour (v0), sobel (v1), compare (both) (default: auto)",
+    )
+    parser.add_argument(
+        "--sobel-threshold",
+        type=float,
+        default=15.0,
+        help="Minimum gradient magnitude for valid edge (default: 15.0)",
+    )
+    parser.add_argument(
+        "--sobel-kernel-size",
+        type=int,
+        default=3,
+        choices=[3, 5, 7],
+        help="Sobel kernel size (default: 3)",
+    )
+    parser.add_argument(
+        "--no-subpixel",
+        action="store_true",
+        help="Disable sub-pixel edge refinement",
+    )
+
     return parser.parse_args()
 
 
@@ -137,6 +166,8 @@ def create_output(
     finger_detected: bool = False,
     view_angle_ok: bool = True,
     fail_reason: Optional[str] = None,
+    edge_method_used: Optional[str] = None,
+    method_comparison: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Create output dictionary in the specified format.
@@ -149,11 +180,13 @@ def create_output(
         finger_detected: Whether finger was detected
         view_angle_ok: Whether view angle is acceptable
         fail_reason: Reason for failure if applicable
+        edge_method_used: Edge detection method used (v1)
+        method_comparison: Comparison data when using compare mode (v1)
 
     Returns:
         Output dictionary matching PRD specification
     """
-    return {
+    output = {
         "finger_outer_diameter_cm": float(finger_diameter_cm) if finger_diameter_cm is not None else None,
         "confidence": float(round(confidence, 3)),
         "scale_px_per_cm": round(float(scale_px_per_cm), 2) if scale_px_per_cm is not None else None,
@@ -164,6 +197,15 @@ def create_output(
         },
         "fail_reason": fail_reason,
     }
+
+    # Add v1 fields if applicable
+    if edge_method_used is not None:
+        output["edge_method_used"] = edge_method_used
+
+    if method_comparison is not None:
+        output["method_comparison"] = method_comparison
+
+    return output
 
 
 def save_output(output: Dict[str, Any], output_path: str) -> None:
@@ -181,6 +223,10 @@ def measure_finger(
     confidence_threshold: float = 0.7,
     save_intermediate: bool = False,
     debug_path: Optional[str] = None,
+    edge_method: str = "auto",
+    sobel_threshold: float = 15.0,
+    sobel_kernel_size: int = 3,
+    use_subpixel: bool = True,
 ) -> Dict[str, Any]:
     """
     Main measurement pipeline.
@@ -191,6 +237,10 @@ def measure_finger(
         confidence_threshold: Minimum confidence threshold
         save_intermediate: Whether to save intermediate artifacts
         debug_path: Path to save debug visualization
+        edge_method: Edge detection method (auto, contour, sobel, compare)
+        sobel_threshold: Minimum gradient magnitude for valid edge
+        sobel_kernel_size: Sobel kernel size (3, 5, or 7)
+        use_subpixel: Enable sub-pixel edge refinement
 
     Returns:
         Output dictionary with measurement results
@@ -332,35 +382,133 @@ def measure_finger(
         )
 
     # Phase 7: Measure finger width at ring zone
+
+    # Phase 7a: Contour-based measurement (v0 method)
     try:
-        width_data = compute_cross_section_width(
+        contour_measurement = compute_cross_section_width(
             contour=contour,
             axis_data=axis_data,
             zone_data=zone_data,
             num_samples=20,
         )
 
-        # Convert to centimeters
-        median_width_cm = width_data["median_width_px"] / px_per_cm
-        mean_width_cm = width_data["mean_width_px"] / px_per_cm
-        std_width_cm = width_data["std_width_px"] / px_per_cm
-
-        print(f"Width measured: {width_data['num_samples']} samples, "
-              f"median={median_width_cm:.2f}cm, std={std_width_cm:.3f}cm")
-
-        # Sanity check: finger width should be in realistic range (1.4-2.4 cm)
-        if median_width_cm < 1.0 or median_width_cm > 3.0:
-            print(f"Warning: Measured width {median_width_cm:.2f}cm is outside realistic range")
+        contour_width_cm = contour_measurement["median_width_px"] / px_per_cm
+        print(f"Contour width: {contour_width_cm:.4f}cm "
+              f"({contour_measurement['num_samples']} samples, "
+              f"std={contour_measurement['std_width_px']:.2f}px)")
 
     except Exception as e:
-        print(f"Failed to measure finger width: {e}")
+        print(f"Failed to measure finger width (contour): {e}")
         return create_output(
             card_detected=True,
             finger_detected=True,
             scale_px_per_cm=px_per_cm,
             view_angle_ok=view_angle_ok,
             fail_reason="width_measurement_failed",
+            edge_method_used="contour",
         )
+
+    # Phase 7b: Sobel-based measurement (v1 method)
+    sobel_measurement = None
+    sobel_failed = False
+
+    if edge_method in ["sobel", "auto", "compare"]:
+        try:
+            print(f"Running Sobel edge refinement (threshold={sobel_threshold}, kernel={sobel_kernel_size})...")
+            sobel_measurement = refine_edges_sobel(
+                image=image,
+                axis_data=axis_data,
+                zone_data=zone_data,
+                scale_px_per_cm=px_per_cm,
+                finger_mask=cleaned_mask,
+                sobel_threshold=sobel_threshold,
+                kernel_size=sobel_kernel_size,
+            )
+
+            sobel_width_cm = sobel_measurement["median_width_cm"]
+            print(f"Sobel width: {sobel_width_cm:.4f}cm "
+                  f"({sobel_measurement['num_samples']} samples, "
+                  f"std={sobel_measurement['std_width_px']:.2f}px, "
+                  f"quality={sobel_measurement['edge_quality']['overall_score']:.3f})")
+
+        except Exception as e:
+            print(f"Sobel edge refinement failed: {e}")
+            sobel_failed = True
+            if edge_method == "sobel":
+                # User explicitly requested Sobel, fail if it doesn't work
+                return create_output(
+                    card_detected=True,
+                    finger_detected=True,
+                    scale_px_per_cm=px_per_cm,
+                    view_angle_ok=view_angle_ok,
+                    fail_reason="sobel_edge_refinement_failed",
+                    edge_method_used="sobel",
+                )
+
+    # Select measurement method based on edge_method flag
+    method_comparison_data = None
+
+    if edge_method == "contour":
+        # Use contour method only
+        final_measurement = contour_measurement
+        median_width_cm = contour_width_cm
+        edge_method_used = "contour"
+
+    elif edge_method == "sobel":
+        # Use Sobel method only (already handled failure case above)
+        final_measurement = sobel_measurement
+        median_width_cm = sobel_measurement["median_width_cm"]
+        edge_method_used = "sobel"
+
+    elif edge_method == "auto":
+        # Automatic selection based on quality
+        if sobel_measurement and not sobel_failed:
+            should_use_sobel, reason = should_use_sobel_measurement(sobel_measurement, contour_measurement)
+
+            if should_use_sobel:
+                final_measurement = sobel_measurement
+                median_width_cm = sobel_measurement["median_width_cm"]
+                edge_method_used = "sobel"
+                print(f"Auto-selected: Sobel (reason: {reason})")
+            else:
+                final_measurement = contour_measurement
+                median_width_cm = contour_width_cm
+                edge_method_used = "contour_fallback"
+                print(f"Auto-selected: Contour fallback (reason: {reason})")
+        else:
+            # Sobel failed, use contour
+            final_measurement = contour_measurement
+            median_width_cm = contour_width_cm
+            edge_method_used = "contour_fallback"
+            print(f"Auto-selected: Contour (Sobel not available)")
+
+    elif edge_method == "compare":
+        # Comparison mode: prefer Sobel if available, include comparison data
+        if sobel_measurement and not sobel_failed:
+            method_comparison_data = compare_edge_methods(
+                contour_measurement, sobel_measurement, px_per_cm
+            )
+
+            # Prefer Sobel in compare mode for output
+            final_measurement = sobel_measurement
+            median_width_cm = sobel_measurement["median_width_cm"]
+            edge_method_used = "compare"
+
+            print(f"Method comparison:")
+            print(f"  Contour: {method_comparison_data['contour']['width_cm']:.4f}cm")
+            print(f"  Sobel:   {method_comparison_data['sobel']['width_cm']:.4f}cm")
+            print(f"  Diff:    {method_comparison_data['difference']['relative_pct']:+.2f}%")
+            print(f"  Recommendation: {method_comparison_data['recommendation']['preferred_method']}")
+        else:
+            # Sobel failed, can't compare
+            final_measurement = contour_measurement
+            median_width_cm = contour_width_cm
+            edge_method_used = "contour"
+            print(f"Compare mode: Sobel failed, using contour only")
+
+    # Sanity check: finger width should be in realistic range (1.4-2.4 cm)
+    if median_width_cm < 1.0 or median_width_cm > 3.0:
+        print(f"Warning: Measured width {median_width_cm:.2f}cm is outside realistic range")
 
     # Phase 8: Comprehensive confidence scoring
     # Calculate component confidences
@@ -372,17 +520,35 @@ def measure_finger(
     finger_conf = compute_finger_confidence(hand_data, finger_data, mask_area, image_area)
 
     # Calculate measurement confidence
-    measurement_conf = compute_measurement_confidence(width_data, median_width_cm)
+    measurement_conf = compute_measurement_confidence(final_measurement, median_width_cm)
 
-    # Compute overall confidence
+    # Calculate edge quality confidence (v1)
+    edge_quality_conf = None
+    if edge_method_used in ["sobel", "compare"]:
+        edge_quality_conf = compute_edge_quality_confidence(
+            final_measurement.get("edge_quality")
+        )
+
+    # Compute overall confidence (v0 or v1 based on edge method)
     confidence_breakdown = compute_overall_confidence(
-        card_conf, finger_conf, measurement_conf
+        card_conf,
+        finger_conf,
+        measurement_conf,
+        edge_method=edge_method_used if edge_method_used in ["contour", "sobel"] else "contour",
+        edge_quality_confidence=edge_quality_conf,
     )
 
+    # Print confidence breakdown
+    conf_parts = [
+        f"card={confidence_breakdown['card']:.2f}",
+        f"finger={confidence_breakdown['finger']:.2f}",
+        f"measurement={confidence_breakdown['measurement']:.2f}",
+    ]
+    if confidence_breakdown.get('edge_quality') is not None:
+        conf_parts.append(f"edge={confidence_breakdown['edge_quality']:.2f}")
+
     print(f"Confidence: {confidence_breakdown['overall']:.3f} ({confidence_breakdown['level']}) "
-          f"[card={confidence_breakdown['card']:.2f}, "
-          f"finger={confidence_breakdown['finger']:.2f}, "
-          f"measurement={confidence_breakdown['measurement']:.2f}]")
+          f"[{', '.join(conf_parts)}]")
 
     # Phase 9: Debug visualization
     if debug_path is not None:
@@ -412,6 +578,8 @@ def measure_finger(
         scale_px_per_cm=px_per_cm,
         view_angle_ok=view_angle_ok,
         fail_reason=None,
+        edge_method_used=edge_method_used,
+        method_comparison=method_comparison_data,
     )
 
 
@@ -440,6 +608,10 @@ def main() -> int:
         confidence_threshold=args.confidence_threshold,
         save_intermediate=args.save_intermediate,
         debug_path=args.debug,
+        edge_method=args.edge_method,
+        sobel_threshold=args.sobel_threshold,
+        sobel_kernel_size=args.sobel_kernel_size,
+        use_subpixel=not args.no_subpixel,
     )
 
     # Save output

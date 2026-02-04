@@ -909,3 +909,92 @@ def refine_edges_sobel(
         "edge_data": edge_data,
         "method": "sobel",
     }
+
+
+def compare_edge_methods(
+    contour_result: Dict[str, Any],
+    sobel_result: Dict[str, Any],
+    scale_px_per_cm: float
+) -> Dict[str, Any]:
+    """
+    Compare contour-based and Sobel-based edge detection methods.
+
+    Provides detailed analysis of differences, quality metrics, and
+    recommendation on which method to use.
+
+    Args:
+        contour_result: Output from compute_cross_section_width()
+        sobel_result: Output from refine_edges_sobel()
+        scale_px_per_cm: Scale factor for unit conversion
+
+    Returns:
+        Dictionary containing:
+        - contour: Summary of contour method results
+        - sobel: Summary of Sobel method results
+        - difference: Comparison metrics
+        - recommendation: Which method to use and why
+        - quality_comparison: Quality metrics comparison
+    """
+    # Extract measurements
+    contour_width_cm = contour_result["median_width_px"] / scale_px_per_cm
+    sobel_width_cm = sobel_result["median_width_cm"]
+
+    contour_width_px = contour_result["median_width_px"]
+    sobel_width_px = sobel_result["median_width_px"]
+
+    # Calculate differences
+    diff_cm = sobel_width_cm - contour_width_cm
+    diff_px = sobel_width_px - contour_width_px
+    diff_pct = (diff_cm / contour_width_cm) * 100 if contour_width_cm > 0 else 0.0
+
+    # Quality comparison
+    contour_cv = (contour_result["std_width_px"] / contour_result["median_width_px"]) if contour_result["median_width_px"] > 0 else 0.0
+    sobel_cv = (sobel_result["std_width_px"] / sobel_result["median_width_px"]) if sobel_result["median_width_px"] > 0 else 0.0
+
+    # Determine recommendation
+    should_use_sobel, reason = should_use_sobel_measurement(sobel_result, contour_result)
+
+    # Build summary
+    result = {
+        "contour": {
+            "width_cm": float(contour_width_cm),
+            "width_px": float(contour_width_px),
+            "std_dev_px": float(contour_result["std_width_px"]),
+            "coefficient_variation": float(contour_cv),
+            "num_samples": int(contour_result["num_samples"]),
+            "method": "contour",
+        },
+        "sobel": {
+            "width_cm": float(sobel_width_cm),
+            "width_px": float(sobel_width_px),
+            "std_dev_px": float(sobel_result["std_width_px"]),
+            "coefficient_variation": float(sobel_cv),
+            "num_samples": int(sobel_result["num_samples"]),
+            "subpixel_used": bool(sobel_result["subpixel_refinement_used"]),
+            "success_rate": float(sobel_result["edge_detection_success_rate"]),
+            "edge_quality_score": float(sobel_result["edge_quality"]["overall_score"]),
+            "method": "sobel",
+        },
+        "difference": {
+            "absolute_cm": float(diff_cm),
+            "absolute_px": float(diff_px),
+            "relative_pct": float(diff_pct),
+            "precision_improvement": float(contour_result["std_width_px"] - sobel_result["std_width_px"]),
+        },
+        "recommendation": {
+            "use_sobel": bool(should_use_sobel),
+            "reason": str(reason),
+            "preferred_method": "sobel" if should_use_sobel else "contour",
+        },
+        "quality_comparison": {
+            "contour_cv": float(contour_cv),
+            "sobel_cv": float(sobel_cv),
+            "sobel_quality_score": float(sobel_result["edge_quality"]["overall_score"]),
+            "sobel_gradient_strength": float(sobel_result["edge_quality"]["gradient_strength_score"]),
+            "sobel_consistency": float(sobel_result["edge_quality"]["consistency_score"]),
+            "sobel_smoothness": float(sobel_result["edge_quality"]["smoothness_score"]),
+            "sobel_symmetry": float(sobel_result["edge_quality"]["symmetry_score"]),
+        },
+    }
+
+    return result
