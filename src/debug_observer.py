@@ -990,7 +990,7 @@ def draw_comprehensive_edge_overlay(
 
     # Adaptive font scaling based on image height (more conservative for full-sized images)
     font_scale = max(0.3, h / 1500.0)  # Scale for full-sized images
-    line_height = int(20 + h / 100.0)  # Scale line spacing
+    line_height = int(35 + h / 70.0)   # Scale line spacing (increased for better readability)
     thickness = max(1, int(h / 500.0))
 
     annotations = [
