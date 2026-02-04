@@ -297,10 +297,6 @@ def detect_edges_per_row(
     filter_orientation = gradient_data["filter_orientation"]
 
     h, w = gradient_magnitude.shape
-
-    # Use mask to constrain edge search if available
-    use_mask = roi_data.get("roi_mask") is not None
-    roi_mask = roi_data.get("roi_mask") if use_mask else None
     
     # Get axis information for left/right determination
     axis_center = roi_data.get("axis_center_in_roi")
@@ -314,16 +310,14 @@ def detect_edges_per_row(
         Determine if point is left or right of finger axis.
         Returns: -1 for left, +1 for right, 0 on axis
         
-        Uses cross product: if (point - axis_point) × axis_direction > 0, point is on left
+        After rotation normalization, finger is vertical, so we can simply
+        compare x-coordinate to axis x-coordinate at this row.
         """
         if axis_center is None or axis_direction is None:
             # Fallback to simple center-based logic
             return -1 if point_x < w / 2 else 1
         
-        # Find closest point on axis line to current row
-        # Axis passes through axis_center with direction axis_direction
-        # For row y, find x-coordinate of axis at this y
-        
+        # Find x-coordinate of axis at current row
         if abs(axis_direction[1]) < 1e-6:
             # Nearly horizontal axis (shouldn't happen with upright hand)
             axis_x_at_row = axis_center[0]
@@ -333,18 +327,10 @@ def detect_edges_per_row(
             t = (point_y - axis_center[1]) / axis_direction[1]
             axis_x_at_row = axis_center[0] + t * axis_direction[0]
         
-        # Determine side using cross product
-        # Vector from axis point to test point
-        to_point = np.array([point_x - axis_x_at_row, 0], dtype=np.float32)
-        # Perpendicular to axis (pointing left)
-        perp_left = np.array([-axis_direction[1], axis_direction[0]], dtype=np.float32)
-        
-        # Dot product tells us which side
-        side_value = np.dot(to_point, perp_left)
-        
-        if side_value > 0:
+        # Simple comparison: left side has smaller x, right side has larger x
+        if point_x < axis_x_at_row - 1:  # -1 for numerical tolerance
             return -1  # Left side
-        elif side_value < 0:
+        elif point_x > axis_x_at_row + 1:  # +1 for numerical tolerance
             return 1   # Right side
         else:
             return 0   # On axis
@@ -360,99 +346,88 @@ def detect_edges_per_row(
         valid_rows = np.zeros(num_rows, dtype=bool)
 
         for row in range(num_rows):
-            # If mask available, find leftmost and rightmost mask pixels
-            if use_mask:
+            # Use mask to define search region if available
+            # Then find strongest gradients near mask boundaries
+            row_gradient = gradient_magnitude[row, :]
+            
+            # Get mask boundaries if available to constrain search region
+            roi_mask = roi_data.get("roi_mask")
+            if roi_mask is not None and np.any(roi_mask[row, :] > 0):
+                # Mask available: use it to define search region
                 row_mask = roi_mask[row, :]
                 mask_pixels = np.where(row_mask > 0)[0]
 
                 if len(mask_pixels) < 10:  # Need reasonable finger width
                     continue
 
-                # Finger boundaries are at the edges of the mask
+                # Mask boundaries
                 mask_left = mask_pixels[0]
                 mask_right = mask_pixels[-1]
 
-                # Look for strong gradients near mask boundaries (within ±10px)
-                search_radius = 10
+                # Search for strongest gradient NEAR mask boundary (±50px)
+                search_radius = 50
                 left_search_start = max(0, mask_left - search_radius)
                 left_search_end = min(w, mask_left + search_radius)
                 right_search_start = max(0, mask_right - search_radius)
                 right_search_end = min(w, mask_right + search_radius)
-
-                row_gradient = gradient_magnitude[row, :]
-
-                # NEW: Validate edges are on correct side of axis
-                # Find strongest edge in left search region (must be on left side of axis)
-                left_edge_x = None
-                left_strength = 0
-                left_region_grad = row_gradient[left_search_start:left_search_end]
-                if len(left_region_grad) > 0:
-                    # Find all peaks in left region
-                    for i in range(len(left_region_grad)):
-                        x = left_search_start + i
-                        if left_region_grad[i] > threshold:
-                            # Check if this edge is on the left side of axis
-                            side = which_side_of_axis(x, row)
-                            if side <= 0:  # Left or on axis
-                                if left_region_grad[i] > left_strength:
-                                    left_edge_x = x
-                                    left_strength = left_region_grad[i]
                 
-                if left_edge_x is None:
-                    # Fallback: use mask boundary if no valid edge found
-                    left_edge_x = mask_left
-                    left_strength = row_gradient[mask_left]
-
-                # NEW: Find strongest edge in right search region (must be on right side of axis)
-                right_edge_x = None
-                right_strength = 0
-                right_region_grad = row_gradient[right_search_start:right_search_end]
-                if len(right_region_grad) > 0:
-                    # Find all peaks in right region
-                    for i in range(len(right_region_grad)):
-                        x = right_search_start + i
-                        if right_region_grad[i] > threshold:
-                            # Check if this edge is on the right side of axis
-                            side = which_side_of_axis(x, row)
-                            if side >= 0:  # Right or on axis
-                                if right_region_grad[i] > right_strength:
-                                    right_edge_x = x
-                                    right_strength = right_region_grad[i]
+                # Find candidates above threshold
+                left_candidates = []
+                for x in range(left_search_start, left_search_end):
+                    if row_gradient[x] > threshold:
+                        side = which_side_of_axis(x, row)
+                        if side <= 0:  # Must be on left side of axis
+                            left_candidates.append((x, row_gradient[x]))
                 
-                if right_edge_x is None:
-                    # Fallback: use mask boundary if no valid edge found
-                    right_edge_x = mask_right
-                    right_strength = row_gradient[mask_right]
-
+                right_candidates = []
+                for x in range(right_search_start, right_search_end):
+                    if row_gradient[x] > threshold:
+                        side = which_side_of_axis(x, row)
+                        if side >= 0:  # Must be on right side of axis
+                            right_candidates.append((x, row_gradient[x]))
+                
+                if len(left_candidates) == 0 or len(right_candidates) == 0:
+                    continue
+                
+                # Select STRONGEST gradient (skin-to-background transition)
+                left_candidates.sort(key=lambda x: x[1], reverse=True)
+                right_candidates.sort(key=lambda x: x[1], reverse=True)
+                
+                left_edge_x = left_candidates[0][0]
+                left_strength = left_candidates[0][1]
+                right_edge_x = right_candidates[0][0]
+                right_strength = right_candidates[0][1]
+                
             else:
-                # Gradient-only method with axis constraint
-                row_gradient = gradient_magnitude[row, :]
+                # No mask: search entire row with axis constraint
                 strong_edges = np.where(row_gradient > threshold)[0]
 
                 if len(strong_edges) < 2:
                     continue
 
-                # NEW: Separate edges by which side of axis they're on
+                # Separate by axis side
                 left_candidates = []
                 right_candidates = []
                 
                 for edge_x in strong_edges:
                     side = which_side_of_axis(edge_x, row)
+                    strength = row_gradient[edge_x]
                     if side < 0:  # Left side
-                        left_candidates.append(edge_x)
+                        left_candidates.append((edge_x, strength))
                     elif side > 0:  # Right side
-                        right_candidates.append(edge_x)
-                    # Edges exactly on axis are ignored
+                        right_candidates.append((edge_x, strength))
 
                 if len(left_candidates) == 0 or len(right_candidates) == 0:
                     continue
 
-                # Take leftmost left edge and rightmost right edge (outermost boundaries)
-                left_edge_x = left_candidates[0]
-                right_edge_x = right_candidates[-1]
-
-                left_strength = row_gradient[left_edge_x]
-                right_strength = row_gradient[right_edge_x]
+                # Select strongest gradients
+                left_candidates.sort(key=lambda x: x[1], reverse=True)
+                right_candidates.sort(key=lambda x: x[1], reverse=True)
+                
+                left_edge_x = left_candidates[0][0]
+                left_strength = left_candidates[0][1]
+                right_edge_x = right_candidates[0][0]
+                right_strength = right_candidates[0][1]
 
 
             # Calculate width
