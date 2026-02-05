@@ -101,6 +101,7 @@ fi
 mkdir -p output
 
 # Build command
+#CMD="$PYTHON measure_finger.py --input $INPUT_IMAGE --output $OUTPUT_JSON --edge-method sobel --edge-detection-method canny_contour"
 CMD="$PYTHON measure_finger.py --input $INPUT_IMAGE --output $OUTPUT_JSON"
 
 if [ "$ENABLE_DEBUG" = true ]; then

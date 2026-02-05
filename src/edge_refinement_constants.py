@@ -38,7 +38,7 @@ DEFAULT_GRADIENT_THRESHOLD = 15.0
 # Realistic finger width range for validation
 # Based on typical adult finger widths across ring sizes
 MIN_FINGER_WIDTH_CM = 1.6  # Size 6 (16mm)
-MAX_FINGER_WIDTH_CM = 2.3  # Size 13 (23mm)
+MAX_FINGER_WIDTH_CM = 2.5  # Size 13 (23mm)
 
 # Tolerance for expected width comparison (when contour available)
 WIDTH_TOLERANCE_FACTOR = 0.25  # ±25%
