@@ -92,22 +92,22 @@ def estimate_finger_axis_from_landmarks(
     """
     Calculate finger axis directly from anatomical landmarks.
 
-    More robust than PCA for bent fingers since it uses anatomical structure.
+    OPTIMIZED: Focuses on DIP-PIP segment (ring-wearing zone) for better accuracy.
 
     Args:
         landmarks: 4x2 array of finger landmarks [MCP, PIP, DIP, TIP]
         method: Calculation method
-            - "endpoints": MCP to TIP vector (simple, fast)
-            - "linear_fit": Linear regression on all 4 landmarks (robust to noise)
+            - "endpoints": MCP to TIP vector (legacy, less accurate)
+            - "linear_fit": DIP to PIP vector (DEFAULT, optimized for ring measurements)
             - "median_direction": Median of 3 segment directions (robust to outliers)
 
     Returns:
         Dictionary containing:
-        - center: Axis center point (x, y)
-        - direction: Unit direction vector (dx, dy) pointing from palm to tip
-        - length: Estimated finger length in pixels
-        - palm_end: Palm-side endpoint (MCP position)
-        - tip_end: Fingertip endpoint (TIP position)
+        - center: Axis center point at midpoint of PIP-DIP (x, y)
+        - direction: Unit direction vector (dx, dy) from PIP to DIP
+        - length: Full finger length in pixels (TIP to MCP, for reference)
+        - palm_end: Visualization endpoint (extended from PIP toward palm)
+        - tip_end: Visualization endpoint (extended from DIP toward tip)
         - method: Method used ("landmarks")
     """
     # Validate landmarks
@@ -122,28 +122,22 @@ def estimate_finger_axis_from_landmarks(
     tip = landmarks[3]  # Fingertip
 
     # Calculate direction based on method
+    # OPTIMIZED: Focus on DIP-PIP segment (ring-wearing zone)
     if method == "endpoints":
-        # Simple: vector from MCP to TIP
+        # Simple: vector from MCP to TIP (legacy, less accurate for ring zone)
         direction = tip - mcp
         direction_length = np.linalg.norm(direction)
         direction = direction / direction_length
 
     elif method == "linear_fit":
-        # Robust: linear regression on all 4 landmarks
-        # Fit y = mx + b to landmark points
-        x_coords = landmarks[:, 0]
-        y_coords = landmarks[:, 1]
+        # OPTIMIZED: Use only DIP and PIP (most relevant for ring measurements)
+        # These two joints define the proximal phalanx where rings are worn
+        direction = dip - pip  # Vector from PIP to DIP
+        direction_length = np.linalg.norm(direction)
+        direction = direction / direction_length
 
-        # Use polyfit to get slope
-        coeffs = np.polyfit(x_coords, y_coords, deg=1)
-        slope = coeffs[0]
-
-        # Convert slope to direction vector
-        # If slope is m, direction is (1, m) normalized
-        direction = np.array([1.0, slope], dtype=np.float32)
-        direction = direction / np.linalg.norm(direction)
-
-        # Ensure direction points from palm (MCP) to tip (TIP)
+        # Ensure direction points from palm to tip (PIP to DIP)
+        # Direction should already be correct, but verify
         if np.dot(direction, tip - mcp) < 0:
             direction = -direction
 
@@ -162,16 +156,18 @@ def estimate_finger_axis_from_landmarks(
     else:
         raise ValueError(f"Unknown method: {method}. Use 'endpoints', 'linear_fit', or 'median_direction'")
 
-    # Calculate center as midpoint of all landmarks
-    center = np.mean(landmarks, axis=0)
+    # OPTIMIZED: Center at midpoint of DIP and PIP (ring zone focus)
+    center = (pip + dip) / 2.0
 
-    # Calculate finger length
-    # Use actual landmark span for more accurate length
+    # Calculate finger length (still use full finger for reference)
     length = np.linalg.norm(tip - mcp)
 
-    # Palm end and tip end are just the MCP and TIP landmarks
-    palm_end = mcp.copy()
-    tip_end = tip.copy()
+    # OPTIMIZED: Visual endpoints are DIP and PIP (ring zone segment)
+    # Extended slightly for visualization clarity
+    segment_length = np.linalg.norm(dip - pip)
+    extension_factor = 0.5  # Extend 50% beyond each endpoint for visualization
+    palm_end = pip - direction * (segment_length * extension_factor)
+    tip_end = dip + direction * (segment_length * extension_factor)
 
     return {
         "center": center.astype(np.float32),
