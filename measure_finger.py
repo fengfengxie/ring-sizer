@@ -404,9 +404,10 @@ def measure_finger(
     )
 
     angle_from_vertical = calculate_angle_from_vertical(axis_data["direction"])
-    rotation_threshold = 2.0  # Only rotate if > 2° off vertical
+    #rotation_threshold = 2.0  # Only rotate if > 2° off vertical
+    rotation_threshold = 0.0  # always rorate to upright
 
-    if abs(angle_from_vertical) > rotation_threshold:
+    if abs(angle_from_vertical) >= rotation_threshold:
         print(f"Finger axis is {angle_from_vertical:.1f}° from vertical, applying precise rotation...")
 
         # Rotate image
