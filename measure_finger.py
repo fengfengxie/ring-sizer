@@ -46,6 +46,7 @@ Examples:
     python measure_finger.py --input photo.jpg --output result.json
     python measure_finger.py --input photo.jpg --output result.json --debug overlay.png
     python measure_finger.py --input photo.jpg --output result.json --finger-index ring
+    python measure_finger.py --input photo.jpg --output result.json --finger-index middle
         """,
     )
 
@@ -79,8 +80,8 @@ Examples:
         "--finger-index",
         type=str,
         choices=["auto", "index", "middle", "ring", "pinky"],
-        default="auto",
-        help="Which finger to measure (default: auto-detect)",
+        default="index",
+        help="Which finger to measure (default: index). 'auto' detects the most extended finger.",
     )
     parser.add_argument(
         "--confidence-threshold",
@@ -233,7 +234,7 @@ def save_output(output: Dict[str, Any], output_path: str) -> None:
 
 def measure_finger(
     image: np.ndarray,
-    finger_index: FingerIndex = "auto",
+    finger_index: FingerIndex = "index",
     confidence_threshold: float = 0.7,
     save_intermediate: bool = False,
     debug_path: Optional[str] = None,
@@ -280,7 +281,7 @@ def measure_finger(
         from pathlib import Path
         finger_debug_dir = str(Path(debug_path).parent / "finger_segmentation_debug")
 
-    hand_data = segment_hand(image, debug_dir=finger_debug_dir)
+    hand_data = segment_hand(image, finger=finger_index, debug_dir=finger_debug_dir)
 
     if hand_data is None:
         print("No hand detected in image")

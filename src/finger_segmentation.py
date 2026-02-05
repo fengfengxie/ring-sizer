@@ -162,7 +162,10 @@ def _transform_landmarks_for_rotation(
     return landmarks
 
 
-def detect_hand_orientation(landmarks_normalized: np.ndarray) -> float:
+def detect_hand_orientation(
+    landmarks_normalized: np.ndarray,
+    finger: FingerIndex = "index"
+) -> float:
     """
     Detect hand orientation angle from vertical (canonical orientation).
     
@@ -170,17 +173,24 @@ def detect_hand_orientation(landmarks_normalized: np.ndarray) -> float:
     
     Args:
         landmarks_normalized: MediaPipe hand landmarks (21x2) in normalized [0-1] coordinates
+        finger: Which finger to use for orientation detection (default: "index")
     
     Returns:
         Angle in degrees to rotate image clockwise to achieve canonical orientation.
         Returns one of: 0, 90, 180, 270
     """
-    # Get wrist (landmark 0) and middle finger tip (landmark 12)
+    # Get wrist (landmark 0) and specified finger tip
     wrist = landmarks_normalized[WRIST_LANDMARK]
-    middle_tip = landmarks_normalized[FINGER_LANDMARKS["middle"][3]]
+    
+    # Use specified finger, fallback to middle if invalid
+    if finger in FINGER_LANDMARKS:
+        finger_tip = landmarks_normalized[FINGER_LANDMARKS[finger][3]]
+    else:
+        # Fallback to middle finger for "auto" or invalid values
+        finger_tip = landmarks_normalized[FINGER_LANDMARKS["middle"][3]]
     
     # Compute vector from wrist to fingertip
-    direction = middle_tip - wrist
+    direction = finger_tip - wrist
     
     # Compute angle from vertical upward direction
     # In image coordinates: y increases downward, x increases rightward
@@ -235,6 +245,7 @@ def _snap_to_orthogonal(angle_deg: float) -> int:
 def normalize_hand_orientation(
     image: np.ndarray,
     landmarks_normalized: np.ndarray,
+    finger: FingerIndex = "index",
     debug_observer: Optional[DebugObserver] = None,
 ) -> Tuple[np.ndarray, int]:
     """
@@ -243,32 +254,39 @@ def normalize_hand_orientation(
     Args:
         image: Input BGR image
         landmarks_normalized: MediaPipe landmarks in normalized [0-1] coordinates
+        finger: Which finger to use for orientation detection (default: "index")
         debug_observer: Optional debug observer for visualization
     
     Returns:
         Tuple of (rotated_image, rotation_angle_degrees)
         rotation_angle_degrees is one of: 0, 90, 180, 270
     """
-    # Detect hand orientation
-    rotation_needed = detect_hand_orientation(landmarks_normalized)
+    # Detect hand orientation based on specified finger
+    rotation_needed = detect_hand_orientation(landmarks_normalized, finger)
     
     # Debug: Draw orientation detection
     if debug_observer:
         wrist = landmarks_normalized[WRIST_LANDMARK]
-        middle_tip = landmarks_normalized[FINGER_LANDMARKS["middle"][3]]
+        
+        # Use specified finger for visualization, fallback to middle for "auto"
+        if finger in FINGER_LANDMARKS:
+            finger_tip = landmarks_normalized[FINGER_LANDMARKS[finger][3]]
+        else:
+            finger_tip = landmarks_normalized[FINGER_LANDMARKS["middle"][3]]
         
         # Convert to pixel coordinates
         h, w = image.shape[:2]
         wrist_px = (int(wrist[0] * w), int(wrist[1] * h))
-        tip_px = (int(middle_tip[0] * w), int(middle_tip[1] * h))
+        tip_px = (int(finger_tip[0] * w), int(finger_tip[1] * h))
         
         debug_img = image.copy()
         
         # Draw direction arrow
         cv2.arrowedLine(debug_img, wrist_px, tip_px, (0, 255, 255), 3, tipLength=0.3)
         
-        # Draw text annotation
-        text = f"Detected: {int((360 - rotation_needed) % 360)}deg from vertical"
+        # Draw text annotation with finger name
+        finger_name = finger if finger in FINGER_LANDMARKS else "middle (auto)"
+        text = f"Using {finger_name} finger: {int((360 - rotation_needed) % 360)}deg from vertical"
         text2 = f"Rotation needed: {rotation_needed}deg CW"
         cv2.putText(debug_img, text, (20, 40), FONT_FACE, 
                    FontScale.LABEL, Color.YELLOW, FontThickness.LABEL)
@@ -294,6 +312,7 @@ def normalize_hand_orientation(
 
 def segment_hand(
     image: np.ndarray,
+    finger: FingerIndex = "index",
     max_dimension: int = 1280,
     debug_dir: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -302,6 +321,7 @@ def segment_hand(
 
     Args:
         image: Input BGR image
+        finger: Which finger to use for orientation detection (default: "index")
         max_dimension: Maximum dimension for processing (large images are resized)
         debug_dir: Optional directory to save debug images
 
@@ -379,7 +399,7 @@ def segment_hand(
     
     # Now normalize orientation based on hand direction
     canonical_image, orientation_rotation = normalize_hand_orientation(
-        rotated_image, landmarks_normalized_rotated, observer
+        rotated_image, landmarks_normalized_rotated, finger, observer
     )
     
     # Update landmarks for orientation normalization

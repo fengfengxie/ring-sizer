@@ -68,9 +68,30 @@ For quick testing without typing long commands:
 
 ## 📋 Usage Examples
 
-### Basic measurement (auto mode)
+### Basic measurement (defaults to index finger)
 ```bash
 python measure_finger.py --input image.jpg --output result.json
+```
+
+### Measure a specific finger
+```bash
+# Measure ring finger
+python measure_finger.py \
+  --input image.jpg \
+  --output result.json \
+  --finger-index ring
+
+# Measure middle finger
+python measure_finger.py \
+  --input image.jpg \
+  --output result.json \
+  --finger-index middle
+
+# Auto-detect the most extended finger
+python measure_finger.py \
+  --input image.jpg \
+  --output result.json \
+  --finger-index auto
 ```
 
 ### Generate debug visualization
@@ -126,8 +147,16 @@ For optimal results, ensure your input image meets these criteria:
 - **Resolution**: 1080p or higher recommended
 - **View angle**: Near top-down view
 - **Contents**: 
-  - One hand with the finger to be measured extended
+  - One hand with **one finger extended** (index, middle, or ring finger)
   - One standard credit card fully visible (at least 3 corners)
+  - Finger and card should be on the same plane
+- **Finger selection**: 
+  - Default: Index finger (use `--finger-index index` or omit the flag)
+  - For ring sizing: Use `--finger-index ring` to measure ring finger
+  - For middle finger: Use `--finger-index middle`
+  - Auto-detect: Use `--finger-index auto` to measure the most extended finger
+- **Lighting**: Good, even lighting with minimal shadows
+- **Focus**: Sharp image with minimal blur
   - Both finger and card on the same plane
 
 ## 📤 Output Format

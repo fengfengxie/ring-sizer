@@ -50,19 +50,27 @@ pip install -r requirements.txt
 
 ### Running the Program
 ```bash
-# Basic measurement (auto mode - prefers Sobel v1, falls back to contour v0)
+# Basic measurement (defaults to index finger, auto edge detection)
 python measure_finger.py --input input/test_image.jpg --output output/result.json
+
+# Measure specific finger (index, middle, ring, or auto)
+python measure_finger.py \
+  --input input/test_image.jpg \
+  --output output/result.json \
+  --finger-index ring
 
 # With debug visualization
 python measure_finger.py \
   --input input/test_image.jpg \
   --output output/result.json \
+  --finger-index middle \
   --debug output/debug_overlay.png
 
 # Force Sobel edge refinement (v1)
 python measure_finger.py \
   --input image.jpg \
   --output result.json \
+  --finger-index ring \
   --edge-method sobel \
   --sobel-threshold 15.0 \
   --debug output/debug.png
@@ -71,6 +79,7 @@ python measure_finger.py \
 python measure_finger.py \
   --input image.jpg \
   --output result.json \
+  --finger-index middle \
   --edge-method compare \
   --debug output/debug.png
 
@@ -78,6 +87,7 @@ python measure_finger.py \
 python measure_finger.py \
   --input image.jpg \
   --output result.json \
+  --finger-index index \
   --edge-method contour
 ```
 
@@ -152,7 +162,10 @@ v1 improves measurement accuracy by replacing contour-based edge detection with 
 
 **Phase 5a: Landmark-Based Axis Estimation (v1)**
 - Uses MediaPipe finger landmarks directly (4 points: MCP, PIP, DIP, TIP)
-- Three calculation methods:
+- **Finger selection**: Defaults to index finger, can specify middle or ring finger via `--finger-index`
+- Orientation detection uses the **specified finger** for axis calculation (wrist → finger tip)
+- Image automatically rotated to canonical orientation (wrist at bottom, fingers pointing up)
+- Three axis calculation methods:
   - `endpoints`: Simple MCP→TIP vector
   - `linear_fit`: Linear regression on all 4 landmarks (default, most robust)
   - `median_direction`: Median of segment directions
@@ -219,6 +232,7 @@ v1 improves measurement accuracy by replacing contour-based edge detection with 
 
 | Flag | Values | Default | Description |
 |------|--------|---------|-------------|
+| `--finger-index` | auto, index, middle, ring, pinky | **index** | Which finger to measure and use for orientation |
 | `--edge-method` | auto, contour, sobel, compare | auto | Edge detection method |
 | `--sobel-threshold` | float | 15.0 | Minimum gradient magnitude |
 | `--sobel-kernel-size` | 3, 5, 7 | 3 | Sobel kernel size |
@@ -274,11 +288,14 @@ The system measures the **external horizontal width** (outer diameter) of the fi
 - Provides 21 hand landmarks per hand
 - Each finger has 4 landmarks: MCP (base), PIP, DIP, TIP
 - Finger indices: 0=thumb, 1=index, 2=middle, 3=ring, 4=pinky
+- **Orientation detection**: Uses wrist → specified finger tip to determine hand rotation
+- **Automatic rotation**: Image rotated to canonical orientation (wrist at bottom, fingers up) based on selected finger
 
 ### Input Requirements
 For optimal results:
 - Resolution: 1080p or higher recommended
 - View angle: Near top-down view
+- **Finger**: One finger extended (index, middle, or ring). Specify with `--finger-index`
 - Credit card: Must show at least 3 corners, aspect ratio ~1.586
 - Finger and card must be on the same plane
 - Good lighting, minimal blur
