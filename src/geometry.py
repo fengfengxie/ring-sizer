@@ -457,32 +457,30 @@ def localize_ring_zone_from_landmarks(
         return result
 
     elif zone_type == "anatomical":
-        # Anatomical mode: centered on PIP joint
-        # PIP joint (landmarks[1]) is a natural ring-wearing position
-        mcp = landmarks[0]
+        # Anatomical mode: Target the proximal phalanx (ring-wearing segment)
+        # Upper bound: PIP joint (toward fingertip)
+        # Lower bound: PIP - (DIP - PIP) = one segment length below PIP (toward palm)
+        # This spans the proximal phalanx where rings are typically worn
         pip = landmarks[1]
         dip = landmarks[2]
 
-        direction = axis_data["direction"]
+        # Calculate segment length (DIP to PIP distance)
+        segment_vector = dip - pip  # Vector from PIP to DIP
 
-        # Center ring zone on PIP joint
-        zone_center = pip.copy()
+        # Ring zone spans from PIP down toward palm by one segment length
+        # end_point is toward fingertip (PIP)
+        # start_point is toward palm (PIP - segment_vector = one segment below PIP)
+        end_point = pip.copy()  # Upper bound at PIP
+        start_point = pip - segment_vector  # Lower bound one segment below PIP
 
-        # Calculate zone width as percentage of MCP-PIP distance
-        # This makes zone proportional to finger anatomy
-        mcp_pip_distance = np.linalg.norm(pip - mcp)
-        zone_half_width = mcp_pip_distance * (ANATOMICAL_ZONE_WIDTH_FACTOR / 2)
-
-        # Calculate start and end points along axis
-        start_point = zone_center - direction * zone_half_width
-        end_point = zone_center + direction * zone_half_width
-
-        zone_length = zone_half_width * 2
+        # Calculate zone center and length
+        center_point = (start_point + end_point) / 2.0
+        zone_length = np.linalg.norm(end_point - start_point)
 
         return {
             "start_point": start_point.astype(np.float32),
             "end_point": end_point.astype(np.float32),
-            "center_point": zone_center.astype(np.float32),
+            "center_point": center_point.astype(np.float32),
             "length": float(zone_length),
             "localization_method": "anatomical",
         }

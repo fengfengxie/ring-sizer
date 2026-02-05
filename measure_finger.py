@@ -21,7 +21,7 @@ import numpy as np
 from src.image_quality import assess_image_quality
 from src.card_detection import detect_credit_card, compute_scale_factor
 from src.finger_segmentation import segment_hand, isolate_finger, clean_mask, get_finger_contour
-from src.geometry import estimate_finger_axis, localize_ring_zone, compute_cross_section_width
+from src.geometry import estimate_finger_axis, localize_ring_zone, localize_ring_zone_from_landmarks, compute_cross_section_width
 from src.edge_refinement import refine_edges_sobel, should_use_sobel_measurement, compare_edge_methods
 from src.confidence import (
     compute_card_confidence,
@@ -395,10 +395,22 @@ def measure_finger(
 
     # Phase 6: Localize ring-wearing zone
     try:
-        zone_data = localize_ring_zone(axis_data)
-        zone_length_cm = zone_data["length"] / px_per_cm
-        print(f"Ring zone localized: {zone_data['start_pct']*100:.0f}%-{zone_data['end_pct']*100:.0f}% "
-              f"from palm, length={zone_data['length']:.1f}px ({zone_length_cm:.2f}cm)")
+        # Use anatomical mode if landmarks available, otherwise use percentage-based
+        landmarks = finger_data.get("landmarks")
+        if landmarks is not None and len(landmarks) == 4:
+            zone_data = localize_ring_zone_from_landmarks(
+                landmarks=landmarks,
+                axis_data=axis_data,
+                zone_type="anatomical"
+            )
+            zone_length_cm = zone_data["length"] / px_per_cm
+            print(f"Ring zone localized (anatomical): PIP to PIP-(DIP-PIP), "
+                  f"length={zone_data['length']:.1f}px ({zone_length_cm:.2f}cm)")
+        else:
+            zone_data = localize_ring_zone(axis_data)
+            zone_length_cm = zone_data["length"] / px_per_cm
+            print(f"Ring zone localized (percentage): {zone_data['start_pct']*100:.0f}%-{zone_data['end_pct']*100:.0f}% "
+                  f"from palm, length={zone_data['length']:.1f}px ({zone_length_cm:.2f}cm)")
     except Exception as e:
         print(f"Failed to localize ring zone: {e}")
         return create_output(

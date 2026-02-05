@@ -540,13 +540,18 @@ def draw_landmark_axis(
             )
     
     # Draw axis line
-    center = axis_data["center"]
-    direction = axis_data["direction"]
-    length = axis_data["length"]
-    
-    start = center - direction * (length / 2.0)
-    end = center + direction * (length / 2.0)
-    
+    # Use actual anatomical endpoints (MCP to TIP) if available
+    if "palm_end" in axis_data and "tip_end" in axis_data:
+        start = axis_data["palm_end"]  # MCP (palm-side)
+        end = axis_data["tip_end"]      # TIP (fingertip)
+    else:
+        # Fallback to geometric center method (for PCA or old data)
+        center = axis_data["center"]
+        direction = axis_data["direction"]
+        length = axis_data["length"]
+        start = center - direction * (length / 2.0)
+        end = center + direction * (length / 2.0)
+
     # Draw axis
     cv2.line(
         vis,
@@ -554,7 +559,7 @@ def draw_landmark_axis(
         tuple(end.astype(int)),
         Color.CYAN, Size.LINE_THICK
     )
-    
+
     # Draw endpoints
     cv2.circle(vis, tuple(start.astype(int)), Size.ENDPOINT_RADIUS, Color.CYAN, -1)
     cv2.circle(vis, tuple(end.astype(int)), Size.ENDPOINT_RADIUS, Color.MAGENTA, -1)
