@@ -1332,3 +1332,40 @@ python measure_finger.py --input image.jpg --output result.json --finger-index a
 - Date: 2026-02-05
 
 ---
+
+## Bugfix: Replace finger mask with full-ROI mask in Sobel edge detection (2026-02-05) ✅
+**Purpose:** Fix incorrect edge detection caused by finger segmentation mask constraining the search space
+
+### Problem
+The Sobel edge detection pipeline used the finger segmentation mask (`cleaned_mask`) to constrain the gradient search area. This mask was often inaccurate - it would cut off before the actual finger boundary (visible as a green overlay in `03_roi_extraction.png` that didn't cover the full finger width). This caused the right edge to be missed entirely in `07b_filtered_candidates.png`.
+
+### Root Cause
+In `extract_ring_zone_roi()`, the finger mask was cropped to the ROI bounds:
+```python
+roi_mask = finger_mask[y_min:y_max, x_min:x_max].copy()
+```
+The mask-constrained edge detection then searched only within this mask boundary, missing real finger edges that fell outside it.
+
+### Solution
+Replace the finger segmentation mask with a full-ROI mask. The ROI bounds themselves are the correct search constraint - the mask-constrained search algorithm (find strongest gradient from axis to boundary) works well when the boundary is the full ROI edge.
+
+```python
+# Before (bug):
+roi_mask = finger_mask[y_min:y_max, x_min:x_max].copy()
+
+# After (fix):
+roi_mask = np.ones((roi_height, roi_width), dtype=np.uint8) * 255
+```
+
+### Test Results
+
+| Image | Contour | Sobel | Quality | Std Dev |
+|-------|---------|-------|---------|---------|
+| sample 10 (index) | 2.73cm | 2.43cm | 0.817 | 0.76px |
+| sample 11 (index) | 2.43cm | 2.49cm | 0.719 | 1.04px |
+| test_sample2 (middle) | 2.84cm | fallback | - | - |
+
+### Files Modified
+- `src/edge_refinement.py` - Full-ROI mask instead of finger segmentation mask (1 line)
+
+---
