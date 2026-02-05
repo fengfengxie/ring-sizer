@@ -1020,6 +1020,7 @@ def refine_edges_sobel(
     kernel_size: int = DEFAULT_KERNEL_SIZE,
     rotate_align: bool = False,
     expected_width_px: Optional[float] = None,
+    edge_detection_method: str = "per_row",
     debug_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -1030,7 +1031,7 @@ def refine_edges_sobel(
     Pipeline:
     1. Extract ROI around ring zone
     2. Apply bidirectional Sobel filters
-    3. Detect left/right edges per cross-section
+    3. Detect left/right edges (per-row or canny-contour method)
     4. Measure width from edges
     5. Convert to cm and return measurement
 
@@ -1045,6 +1046,7 @@ def refine_edges_sobel(
         kernel_size: Sobel kernel size (3, 5, or 7)
         rotate_align: Rotate ROI for vertical finger alignment
         expected_width_px: Expected width for validation (optional)
+        edge_detection_method: "per_row" (default) or "canny_contour"
         debug_dir: Directory to save debug visualizations (None to skip)
 
     Returns:
@@ -1063,7 +1065,9 @@ def refine_edges_sobel(
     if debug_dir:
         from src.debug_observer import DebugObserver, draw_landmark_axis, draw_ring_zone_roi
         from src.debug_observer import draw_roi_extraction, draw_gradient_visualization
-        from src.debug_observer import draw_edge_candidates, draw_selected_edges
+        from src.debug_observer import draw_gradient_filtering_techniques
+        from src.debug_observer import draw_edge_candidates, draw_filtered_edge_candidates
+        from src.debug_observer import draw_selected_edges
         from src.debug_observer import draw_width_measurements, draw_outlier_detection
         from src.debug_observer import draw_comprehensive_edge_overlay
         observer = DebugObserver(debug_dir)
@@ -1115,13 +1119,51 @@ def refine_edges_sobel(
         grad_mag = draw_gradient_visualization(gradient_data["gradient_magnitude"], cv2.COLORMAP_HOT)
         observer.save_stage("06_gradient_magnitude", grad_mag)
 
-    # Step 3: Detect edges per row
-    edge_data = detect_edges_per_row(
-        gradient_data, roi_data,
-        threshold=sobel_threshold,
-        expected_width_px=expected_width_px,
-        scale_px_per_cm=scale_px_per_cm
-    )
+        # B.3a-h: Filtering technique comparisons (for noise reduction exploration)
+        filtering_techniques = [
+            ('gaussian', '06a_filter_gaussian'),
+            ('median', '06b_filter_median'),
+            ('bilateral', '06c_filter_bilateral'),
+            ('morphology_open', '06d_filter_morph_open'),
+            ('morphology_close', '06e_filter_morph_close'),
+            ('clahe', '06f_filter_clahe'),
+            ('nlm', '06g_filter_nlm'),
+            ('unsharp', '06h_filter_unsharp'),
+        ]
+
+        for technique, filename in filtering_techniques:
+            try:
+                filtered_vis = draw_gradient_filtering_techniques(
+                    gradient_data["gradient_magnitude"],
+                    technique
+                )
+                observer.save_stage(filename, filtered_vis)
+            except Exception as e:
+                logger.debug(f"Failed to generate {technique} filter: {e}")
+                continue
+
+    # Step 3: Detect edges (choose method)
+    if edge_detection_method == "canny_contour":
+        from src.edge_detection_canny import detect_edges_canny_contour
+        logger.debug("Using Canny-contour edge detection method")
+        edge_data = detect_edges_canny_contour(
+            gradient_data, roi_data,
+            threshold_low_percentile=30.0,
+            threshold_high_percentile=70.0,
+            morph_kernel_height=15,
+            min_contour_length=50,
+            border_search_width=30,
+            fit_method="ransac",
+            debug_dir=debug_dir
+        )
+    else:  # Default: per_row method
+        logger.debug("Using per-row edge detection method")
+        edge_data = detect_edges_per_row(
+            gradient_data, roi_data,
+            threshold=sobel_threshold,
+            expected_width_px=expected_width_px,
+            scale_px_per_cm=scale_px_per_cm
+        )
 
     logger.debug(f"Valid rows: {edge_data['num_valid_rows']}/{len(edge_data['valid_rows'])} ({edge_data['num_valid_rows']/len(edge_data['valid_rows'])*100:.1f}%)")
     if edge_data['num_valid_rows'] > 0:
@@ -1133,12 +1175,21 @@ def refine_edges_sobel(
         logger.debug(f"Raw widths range: {np.min(widths):.1f}-{np.max(widths):.1f}px, median: {np.median(widths):.1f}px")
 
     if debug_dir:
-        # B.4: Edge candidates
-        observer.draw_and_save("07_edge_candidates", roi_data["roi_image"],
+        # B.4a: All edge candidates (raw threshold, shows noise)
+        observer.draw_and_save("07a_all_candidates", roi_data["roi_image"],
                              draw_edge_candidates, gradient_data["gradient_magnitude"], sobel_threshold)
 
-        # B.5: Selected edges
-        observer.draw_and_save("08_selected_edges", roi_data["roi_image"], draw_selected_edges, edge_data)
+        # B.4b: Filtered edge candidates (spatially-filtered, what algorithm uses)
+        observer.draw_and_save("07b_filtered_candidates", roi_data["roi_image"],
+                             draw_filtered_edge_candidates,
+                             gradient_data["gradient_magnitude"],
+                             sobel_threshold,
+                             roi_data.get("roi_mask"),
+                             roi_data["axis_center_in_roi"],
+                             roi_data["axis_direction_in_roi"])
+
+        # B.5: Selected edges (final detected edges)
+        observer.draw_and_save("09_selected_edges", roi_data["roi_image"], draw_selected_edges, edge_data)
 
     # Step 4: Measure width from edges (with sub-pixel refinement)
     width_data = measure_width_from_edges(
@@ -1150,10 +1201,10 @@ def refine_edges_sobel(
     if debug_dir:
         # Stage C: Measurement
         # C.1: Sub-pixel refinement (use selected edges for now)
-        observer.draw_and_save("09_subpixel_refinement", roi_data["roi_image"], draw_selected_edges, edge_data)
+        observer.draw_and_save("10_subpixel_refinement", roi_data["roi_image"], draw_selected_edges, edge_data)
 
         # C.2: Width measurements
-        observer.draw_and_save("10_width_measurements", roi_data["roi_image"],
+        observer.draw_and_save("11_width_measurements", roi_data["roi_image"],
                              draw_width_measurements, edge_data, width_data)
 
         # C.3: Width distribution (histogram - requires matplotlib)
@@ -1163,11 +1214,11 @@ def refine_edges_sobel(
             pass  # Skip if matplotlib not available
 
         # C.4: Outlier detection
-        observer.draw_and_save("12_outlier_detection", roi_data["roi_image"],
+        observer.draw_and_save("13_outlier_detection", roi_data["roi_image"],
                              draw_outlier_detection, edge_data, width_data)
 
         # C.5: Comprehensive edge overlay on full image
-        observer.draw_and_save("13_comprehensive_overlay", image,
+        observer.draw_and_save("14_comprehensive_overlay", image,
                              draw_comprehensive_edge_overlay,
                              edge_data, roi_data["roi_bounds"], axis_data, zone_data,
                              width_data, scale_px_per_cm)
@@ -1230,7 +1281,7 @@ def _save_width_distribution(width_data: Dict[str, Any], debug_dir: str) -> None
     ax.grid(True, alpha=0.3)
 
     # Save
-    output_path = os.path.join(debug_dir, "11_width_distribution.png")
+    output_path = os.path.join(debug_dir, "12_width_distribution.png")
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
 

@@ -662,26 +662,370 @@ def draw_gradient_visualization(
     return cv2.applyColorMap(grad_vis, colormap)
 
 
+def draw_gradient_filtering_techniques(
+    gradient_magnitude: np.ndarray,
+    technique: str
+) -> np.ndarray:
+    """
+    Apply various filtering techniques to gradient magnitude for comparison.
+
+    Techniques:
+    - 'gaussian': Gaussian blur (smoothing)
+    - 'median': Median filter (salt-and-pepper noise removal)
+    - 'bilateral': Bilateral filter (edge-preserving smoothing)
+    - 'morphology_open': Morphological opening (remove small bright spots)
+    - 'morphology_close': Morphological closing (fill small dark gaps)
+    - 'clahe': Contrast Limited Adaptive Histogram Equalization
+    - 'nlm': Non-local means denoising
+    - 'unsharp': Unsharp masking (edge enhancement)
+
+    Args:
+        gradient_magnitude: Raw gradient magnitude array
+        technique: Filtering technique name
+
+    Returns:
+        Filtered gradient magnitude visualization (BGR image)
+    """
+    # Normalize to 0-255 for processing
+    grad_norm = cv2.normalize(gradient_magnitude, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    if technique == 'gaussian':
+        # Gaussian blur - smooth out noise
+        filtered = cv2.GaussianBlur(grad_norm, (5, 5), 1.5)
+        title = "Gaussian Blur (5x5, sigma=1.5)"
+        description = "Smooths noise, preserves strong edges"
+
+    elif technique == 'median':
+        # Median filter - excellent for salt-and-pepper noise
+        filtered = cv2.medianBlur(grad_norm, 5)
+        title = "Median Filter (5x5)"
+        description = "Removes impulse noise, preserves edges"
+
+    elif technique == 'bilateral':
+        # Bilateral filter - edge-preserving smoothing
+        filtered = cv2.bilateralFilter(grad_norm, 9, 75, 75)
+        title = "Bilateral Filter (d=9, sigma=75)"
+        description = "Smooths noise while preserving edges"
+
+    elif technique == 'morphology_open':
+        # Morphological opening - remove small bright spots
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        filtered = cv2.morphologyEx(grad_norm, cv2.MORPH_OPEN, kernel)
+        title = "Morphology Opening (3x3)"
+        description = "Removes small bright noise spots"
+
+    elif technique == 'morphology_close':
+        # Morphological closing - fill small dark gaps
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        filtered = cv2.morphologyEx(grad_norm, cv2.MORPH_CLOSE, kernel)
+        title = "Morphology Closing (3x3)"
+        description = "Fills small dark gaps in edges"
+
+    elif technique == 'clahe':
+        # CLAHE - enhance local contrast
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        filtered = clahe.apply(grad_norm)
+        title = "CLAHE (clip=2.0, grid=8x8)"
+        description = "Enhances local contrast adaptively"
+
+    elif technique == 'nlm':
+        # Non-local means denoising - advanced denoising
+        filtered = cv2.fastNlMeansDenoising(grad_norm, None, h=10, templateWindowSize=7, searchWindowSize=21)
+        title = "Non-Local Means (h=10)"
+        description = "Advanced denoising, preserves structure"
+
+    elif technique == 'unsharp':
+        # Unsharp masking - edge enhancement
+        gaussian = cv2.GaussianBlur(grad_norm, (5, 5), 1.5)
+        filtered = cv2.addWeighted(grad_norm, 1.5, gaussian, -0.5, 0)
+        filtered = np.clip(filtered, 0, 255).astype(np.uint8)
+        title = "Unsharp Masking (amount=1.5)"
+        description = "Enhances edges by subtracting blur"
+
+    else:
+        filtered = grad_norm
+        title = "Unknown Technique"
+        description = ""
+
+    # Apply HOT colormap for visualization
+    colored = cv2.applyColorMap(filtered, cv2.COLORMAP_HOT)
+
+    # Add side-by-side comparison
+    h, w = grad_norm.shape
+    comparison = np.zeros((h, w * 2, 3), dtype=np.uint8)
+
+    # Original on left
+    original_colored = cv2.applyColorMap(grad_norm, cv2.COLORMAP_HOT)
+    comparison[:, :w] = original_colored
+
+    # Filtered on right
+    comparison[:, w:] = colored
+
+    # Add labels
+    cv2.putText(comparison, "Original", (20, 40), FONT_FACE, 1.5, Color.WHITE, 4)
+    cv2.putText(comparison, "Original", (20, 40), FONT_FACE, 1.5, Color.CYAN, 2)
+
+    cv2.putText(comparison, title, (w + 20, 40), FONT_FACE, 1.5, Color.WHITE, 4)
+    cv2.putText(comparison, title, (w + 20, 40), FONT_FACE, 1.5, Color.GREEN, 2)
+
+    cv2.putText(comparison, description, (w + 20, 80), FONT_FACE, 1.0, Color.WHITE, 3)
+    cv2.putText(comparison, description, (w + 20, 80), FONT_FACE, 1.0, Color.YELLOW, 2)
+
+    # Add statistics comparison
+    orig_mean = np.mean(grad_norm)
+    orig_std = np.std(grad_norm)
+    filt_mean = np.mean(filtered)
+    filt_std = np.std(filtered)
+
+    stats_y = h - 120
+    stats = [
+        f"Mean: {orig_mean:.1f}",
+        f"Std: {orig_std:.1f}",
+        f"Max: {np.max(grad_norm)}",
+    ]
+
+    for i, stat in enumerate(stats):
+        y = stats_y + i * 35
+        cv2.putText(comparison, stat, (20, y), FONT_FACE, 0.9, Color.WHITE, 3)
+        cv2.putText(comparison, stat, (20, y), FONT_FACE, 0.9, Color.CYAN, 2)
+
+    filt_stats = [
+        f"Mean: {filt_mean:.1f}",
+        f"Std: {filt_std:.1f}",
+        f"Max: {np.max(filtered)}",
+    ]
+
+    for i, stat in enumerate(filt_stats):
+        y = stats_y + i * 35
+        cv2.putText(comparison, stat, (w + 20, y), FONT_FACE, 0.9, Color.WHITE, 3)
+        cv2.putText(comparison, stat, (w + 20, y), FONT_FACE, 0.9, Color.GREEN, 2)
+
+    return comparison
+
+
 def draw_edge_candidates(
     roi_image: np.ndarray,
     gradient_magnitude: np.ndarray,
     threshold: float
 ) -> np.ndarray:
     """
-    Draw all pixels above gradient threshold.
+    Draw all pixels above gradient threshold (raw threshold, before spatial filtering).
+
+    This shows ALL pixels where gradient > threshold, including background noise.
+    Use draw_filtered_edge_candidates() to see only spatially-filtered candidates.
     """
     # Convert ROI to BGR
     if len(roi_image.shape) == 2:
         vis = cv2.cvtColor(roi_image, cv2.COLOR_GRAY2BGR)
     else:
         vis = roi_image.copy()
-    
+
     # Find edge candidates
     candidates = gradient_magnitude > threshold
-    
+
     # Overlay candidates in cyan
     vis[candidates] = Color.CYAN
-    
+
+    # Add annotation explaining this is raw threshold
+    count = np.sum(candidates)
+    text1 = f"All pixels > {threshold:.1f}"
+    text2 = "(Before spatial filtering)"
+    text3 = f"Count: {count:,}"
+
+    cv2.putText(vis, text1, (20, 40), FONT_FACE, 1.5, Color.WHITE, 4)
+    cv2.putText(vis, text1, (20, 40), FONT_FACE, 1.5, Color.BLACK, 2)
+
+    cv2.putText(vis, text2, (20, 80), FONT_FACE, 1.2, Color.WHITE, 4)
+    cv2.putText(vis, text2, (20, 80), FONT_FACE, 1.2, Color.YELLOW, 2)
+
+    cv2.putText(vis, text3, (20, 120), FONT_FACE, 1.2, Color.WHITE, 4)
+    cv2.putText(vis, text3, (20, 120), FONT_FACE, 1.2, Color.CYAN, 2)
+
+    return vis
+
+
+def draw_filtered_edge_candidates(
+    roi_image: np.ndarray,
+    gradient_magnitude: np.ndarray,
+    threshold: float,
+    roi_mask: Optional[np.ndarray],
+    axis_center: np.ndarray,
+    axis_direction: np.ndarray
+) -> np.ndarray:
+    """
+    Draw only the spatially-filtered edge candidates that the algorithm actually considers.
+
+    Shows pixels that pass BOTH gradient threshold AND spatial filtering:
+    - Mask-constrained mode: Within finger mask boundaries
+    - Axis-expansion mode: Along search path from axis outward
+
+    This matches what detect_edges_per_row() actually evaluates.
+
+    Args:
+        roi_image: ROI image
+        gradient_magnitude: Gradient magnitude array
+        threshold: Gradient threshold
+        roi_mask: Optional finger mask in ROI coordinates
+        axis_center: Axis center point in ROI coordinates
+        axis_direction: Axis direction vector in ROI coordinates
+
+    Returns:
+        Visualization showing only filtered candidates
+    """
+    # Convert ROI to BGR
+    if len(roi_image.shape) == 2:
+        vis = cv2.cvtColor(roi_image, cv2.COLOR_GRAY2BGR)
+    else:
+        vis = roi_image.copy()
+
+    h, w = gradient_magnitude.shape
+
+    # Helper function to get axis x-coordinate at each row
+    def get_axis_x_at_row(y: int) -> int:
+        """Calculate axis x-coordinate at given y using axis center and direction."""
+        if abs(axis_direction[1]) < 1e-6:
+            # Axis is horizontal, use center x
+            return int(axis_center[0])
+
+        # Calculate offset from axis center
+        dy = y - axis_center[1]
+        dx = dy * (axis_direction[0] / axis_direction[1])
+        x = axis_center[0] + dx
+
+        return int(np.clip(x, 0, w - 1))
+
+    # MASK-CONSTRAINED MODE (if mask available)
+    if roi_mask is not None:
+        mode = "Mask-Constrained"
+        candidate_count = 0
+
+        for y in range(h):
+            row_gradient = gradient_magnitude[y, :]
+            row_mask = roi_mask[y, :]
+
+            if not np.any(row_mask):
+                continue
+
+            # Find mask boundaries
+            mask_indices = np.where(row_mask)[0]
+            if len(mask_indices) < 2:
+                continue
+
+            left_mask_boundary = mask_indices[0]
+            right_mask_boundary = mask_indices[-1]
+
+            # Get axis position
+            axis_x = get_axis_x_at_row(y)
+
+            # Search LEFT from axis to left mask boundary - find STRONGEST gradient
+            left_edge_x = None
+            left_strength = 0
+            search_start = max(left_mask_boundary, min(axis_x, w - 1))
+            for x in range(search_start, left_mask_boundary - 1, -1):
+                if x < 0 or x >= w:
+                    continue
+                if row_gradient[x] > threshold:
+                    # Update if this is stronger than previous
+                    if row_gradient[x] > left_strength:
+                        left_edge_x = x
+                        left_strength = row_gradient[x]
+
+            # If no edge found, try relaxed threshold
+            if left_edge_x is None:
+                relaxed_threshold = threshold * 0.5
+                for x in range(search_start, left_mask_boundary - 1, -1):
+                    if x < 0 or x >= w:
+                        continue
+                    if row_gradient[x] > relaxed_threshold:
+                        if row_gradient[x] > left_strength:
+                            left_edge_x = x
+                            left_strength = row_gradient[x]
+
+            # Search RIGHT from axis to right mask boundary - find STRONGEST gradient
+            right_edge_x = None
+            right_strength = 0
+            search_start = min(right_mask_boundary, max(axis_x, 0))
+            for x in range(search_start, right_mask_boundary + 1):
+                if x < 0 or x >= w:
+                    continue
+                if row_gradient[x] > threshold:
+                    # Update if this is stronger than previous
+                    if row_gradient[x] > right_strength:
+                        right_edge_x = x
+                        right_strength = row_gradient[x]
+
+            # If no edge found, try relaxed threshold
+            if right_edge_x is None:
+                relaxed_threshold = threshold * 0.5
+                for x in range(search_start, right_mask_boundary + 1):
+                    if x < 0 or x >= w:
+                        continue
+                    if row_gradient[x] > relaxed_threshold:
+                        if row_gradient[x] > right_strength:
+                            right_edge_x = x
+                            right_strength = row_gradient[x]
+
+            # Draw the SELECTED edges only (not all candidates)
+            if left_edge_x is not None:
+                cv2.circle(vis, (left_edge_x, y), 2, Color.CYAN, -1)
+                candidate_count += 1
+
+            if right_edge_x is not None:
+                cv2.circle(vis, (right_edge_x, y), 2, Color.MAGENTA, -1)
+                candidate_count += 1
+
+            # Draw axis position
+            cv2.circle(vis, (axis_x, y), 1, Color.YELLOW, -1)
+
+    # AXIS-EXPANSION MODE (no mask)
+    else:
+        mode = "Axis-Expansion"
+        candidate_count = 0
+
+        for y in range(h):
+            row_gradient = gradient_magnitude[y, :]
+            axis_x = get_axis_x_at_row(y)
+
+            if axis_x < 0 or axis_x >= w:
+                continue
+
+            # Draw axis position
+            cv2.circle(vis, (axis_x, y), 2, Color.YELLOW, -1)
+
+            # Search LEFT from axis until first edge
+            for x in range(axis_x, -1, -1):
+                if row_gradient[x] > threshold:
+                    cv2.circle(vis, (x, y), 2, Color.CYAN, -1)
+                    candidate_count += 1
+                    break  # Stop at first edge
+
+            # Search RIGHT from axis until first edge
+            for x in range(axis_x, w):
+                if row_gradient[x] > threshold:
+                    cv2.circle(vis, (x, y), 2, Color.MAGENTA, -1)
+                    candidate_count += 1
+                    break  # Stop at first edge
+
+    # Add annotation
+    text1 = f"Spatially-filtered candidates"
+    text2 = f"Mode: {mode}"
+    text3 = f"Count: {candidate_count:,}"
+
+    cv2.putText(vis, text1, (20, 40), FONT_FACE, 1.5, Color.WHITE, 4)
+    cv2.putText(vis, text1, (20, 40), FONT_FACE, 1.5, Color.GREEN, 2)
+
+    cv2.putText(vis, text2, (20, 80), FONT_FACE, 1.2, Color.WHITE, 4)
+    cv2.putText(vis, text2, (20, 80), FONT_FACE, 1.2, Color.YELLOW, 2)
+
+    cv2.putText(vis, text3, (20, 120), FONT_FACE, 1.2, Color.WHITE, 4)
+    cv2.putText(vis, text3, (20, 120), FONT_FACE, 1.2, Color.CYAN, 2)
+
+    # Add legend
+    legend_y = h - 80
+    cv2.putText(vis, "Yellow: Axis", (20, legend_y), FONT_FACE, 1.0, Color.YELLOW, 2)
+    cv2.putText(vis, "Cyan: Left edges", (20, legend_y + 30), FONT_FACE, 1.0, Color.CYAN, 2)
+    cv2.putText(vis, "Magenta: Right edges", (20, legend_y + 60), FONT_FACE, 1.0, Color.MAGENTA, 2)
+
     return vis
 
 
