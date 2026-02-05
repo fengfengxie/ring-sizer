@@ -393,6 +393,54 @@ def measure_finger(
             fail_reason="axis_estimation_failed",
         )
 
+    # Phase 5b: Precise finger alignment rotation
+    # Rotate image to make finger axis perfectly vertical for accurate width measurement
+    from src.geometry import (
+        calculate_angle_from_vertical,
+        rotate_image_precise,
+        rotate_axis_data,
+        rotate_contour,
+        transform_points_rotation
+    )
+
+    angle_from_vertical = calculate_angle_from_vertical(axis_data["direction"])
+    rotation_threshold = 2.0  # Only rotate if > 2° off vertical
+
+    if abs(angle_from_vertical) > rotation_threshold:
+        print(f"Finger axis is {angle_from_vertical:.1f}° from vertical, applying precise rotation...")
+
+        # Rotate image
+        h_can, w_can = image_canonical.shape[:2]
+        rotation_center = (w_can / 2.0, h_can / 2.0)
+        image_canonical, rotation_matrix = rotate_image_precise(
+            image_canonical, angle_from_vertical, rotation_center
+        )
+
+        # Update axis data
+        axis_data = rotate_axis_data(axis_data, rotation_matrix)
+
+        # Update contour
+        contour = rotate_contour(contour, rotation_matrix)
+
+        # Update landmarks if available
+        if finger_data.get("landmarks") is not None:
+            landmarks_rotated = transform_points_rotation(
+                finger_data["landmarks"], rotation_matrix
+            )
+            finger_data["landmarks"] = landmarks_rotated
+
+        # Update cleaned mask
+        cleaned_mask = cv2.warpAffine(
+            cleaned_mask, rotation_matrix, (w_can, h_can),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0
+        )
+
+        print(f"Rotation applied: {angle_from_vertical:.1f}° CW, finger now vertical")
+    else:
+        print(f"Finger axis is {angle_from_vertical:.1f}° from vertical (within {rotation_threshold}° threshold, no rotation needed)")
+
     # Phase 6: Localize ring-wearing zone
     try:
         # Use anatomical mode if landmarks available, otherwise use percentage-based

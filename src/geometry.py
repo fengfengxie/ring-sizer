@@ -9,6 +9,7 @@ This module handles:
 """
 
 import logging
+import cv2
 import numpy as np
 from typing import Tuple, List, Optional, Dict, Any, Literal
 
@@ -640,3 +641,155 @@ def line_contour_intersections(
             continue
 
     return intersections
+
+
+# ============================================================================
+# Precise Image Rotation for Finger Alignment
+# ============================================================================
+
+def calculate_angle_from_vertical(direction: np.ndarray) -> float:
+    """
+    Calculate the rotation needed to align a direction vector to vertical (upward).
+
+    In image coordinates, vertical upward is (0, -1) in (x, y) format.
+
+    Args:
+        direction: Unit direction vector (dx, dy) in (x, y) format
+
+    Returns:
+        Rotation angle in degrees to apply to align direction to vertical.
+        Positive = need to rotate counter-clockwise (CCW) in image coordinates.
+        Range: [-180, 180]
+    """
+    # Vertical upward in image coordinates: (0, -1)
+    vertical = np.array([0.0, -1.0])
+
+    # Calculate angle using atan2(cross_product, dot_product)
+    # cross = dx * (-1) - dy * 0 = -dx
+    # dot = dx * 0 + dy * (-1) = -dy
+    cross = direction[0] * vertical[1] - direction[1] * vertical[0]
+    dot = np.dot(direction, vertical)
+
+    angle_rad = np.arctan2(cross, dot)
+    angle_deg = np.degrees(angle_rad)
+
+    # Negate the angle: if finger is tilted +10° CW from vertical,
+    # we need to rotate -10° (CCW) to straighten it
+    return -angle_deg
+
+
+def rotate_image_precise(
+    image: np.ndarray,
+    angle_degrees: float,
+    center: Optional[Tuple[float, float]] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Rotate image by a precise angle around a center point.
+
+    Args:
+        image: Input image (grayscale or BGR)
+        angle_degrees: Rotation angle in degrees (positive = clockwise)
+        center: Rotation center (x, y). If None, uses image center.
+
+    Returns:
+        Tuple of:
+        - rotated_image: Rotated image (same size as input)
+        - rotation_matrix: 2x3 affine transformation matrix
+    """
+    h, w = image.shape[:2]
+
+    if center is None:
+        center = (w / 2.0, h / 2.0)
+
+    # Get rotation matrix (OpenCV uses clockwise positive)
+    rotation_matrix = cv2.getRotationMatrix2D(center, angle_degrees, scale=1.0)
+
+    # Apply rotation
+    rotated = cv2.warpAffine(
+        image, rotation_matrix, (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0
+    )
+
+    return rotated, rotation_matrix
+
+
+def transform_points_rotation(
+    points: np.ndarray,
+    rotation_matrix: np.ndarray
+) -> np.ndarray:
+    """
+    Transform points using a rotation matrix from cv2.getRotationMatrix2D.
+
+    Args:
+        points: Nx2 array of points in (x, y) format
+        rotation_matrix: 2x3 affine transformation matrix from cv2.getRotationMatrix2D
+
+    Returns:
+        Nx2 array of transformed points in (x, y) format
+    """
+    # Add homogeneous coordinate (1) to each point: (x, y) -> (x, y, 1)
+    n_points = points.shape[0]
+    homogeneous = np.hstack([points, np.ones((n_points, 1))])
+
+    # Apply transformation: [2x3] @ [3xN]^T -> [2xN]^T
+    transformed = (rotation_matrix @ homogeneous.T).T
+
+    return transformed.astype(np.float32)
+
+
+def rotate_axis_data(
+    axis_data: Dict[str, Any],
+    rotation_matrix: np.ndarray
+) -> Dict[str, Any]:
+    """
+    Update axis data after image rotation.
+
+    Args:
+        axis_data: Axis data dictionary with center, direction, palm_end, tip_end
+        rotation_matrix: 2x3 rotation matrix
+
+    Returns:
+        Updated axis data with transformed coordinates
+    """
+    rotated = axis_data.copy()
+
+    # Transform center point
+    center = axis_data["center"].reshape(1, 2)
+    rotated["center"] = transform_points_rotation(center, rotation_matrix)[0]
+
+    # Transform direction vector (rotation only, no translation)
+    # For direction vectors, we only apply the rotation part (2x2)
+    rotation_only = rotation_matrix[:2, :2]
+    direction = axis_data["direction"].reshape(2, 1)
+    rotated_direction = (rotation_only @ direction).flatten()
+    rotated["direction"] = rotated_direction / np.linalg.norm(rotated_direction)
+
+    # Transform endpoints if they exist
+    if "palm_end" in axis_data:
+        palm_end = axis_data["palm_end"].reshape(1, 2)
+        rotated["palm_end"] = transform_points_rotation(palm_end, rotation_matrix)[0]
+
+    if "tip_end" in axis_data:
+        tip_end = axis_data["tip_end"].reshape(1, 2)
+        rotated["tip_end"] = transform_points_rotation(tip_end, rotation_matrix)[0]
+
+    return rotated
+
+
+def rotate_contour(
+    contour: np.ndarray,
+    rotation_matrix: np.ndarray
+) -> np.ndarray:
+    """
+    Rotate a contour using rotation matrix.
+
+    Args:
+        contour: Nx2 array of contour points in (x, y) format
+        rotation_matrix: 2x3 rotation matrix
+
+    Returns:
+        Rotated contour in same format
+    """
+    return transform_points_rotation(contour, rotation_matrix)
