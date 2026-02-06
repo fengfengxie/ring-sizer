@@ -324,10 +324,13 @@ def extract_ring_zone_roi(
     # Convert to grayscale for edge detection
     roi_gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
 
-    # Use full ROI as the search mask - the ROI bounds ARE the search constraint.
-    # The finger segmentation mask is not used because it can be inaccurate
-    # (e.g. cutting off part of the finger), which would prevent finding true edges.
-    roi_mask = np.ones((roi_height, roi_width), dtype=np.uint8) * 255
+    # Use middle 50% height of ROI as the search mask (25%-75% of height).
+    # This constrains edge detection to the ring zone while avoiding noisy top/bottom edges.
+    # Width remains full ROI width.
+    roi_mask = np.zeros((roi_height, roi_width), dtype=np.uint8)
+    y_start = int(roi_height * 0.25)
+    y_end = int(roi_height * 0.75)
+    roi_mask[y_start:y_end, :] = 255
 
     # Create transform matrix (ROI coords -> original coords)
     # Simple translation for non-rotated case
