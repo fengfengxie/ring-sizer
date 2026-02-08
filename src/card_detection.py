@@ -37,7 +37,6 @@ CARD_ASPECT_RATIO = CARD_WIDTH_MM / CARD_HEIGHT_MM  # ~1.586
 # Detection parameters
 MIN_CARD_AREA_RATIO = 0.01  # Card must be at least 1% of image area
 MAX_CARD_AREA_RATIO = 0.5   # Card must be at most 50% of image area
-CORNER_ANGLE_TOLERANCE = 25  # Degrees deviation from 90° allowed
 
 
 def order_corners(corners: np.ndarray) -> np.ndarray:
@@ -68,34 +67,6 @@ def order_corners(corners: np.ndarray) -> np.ndarray:
         corners[br_idx],
         corners[bl_idx],
     ], dtype=np.float32)
-
-
-def compute_corner_angles(corners: np.ndarray) -> List[float]:
-    """
-    Compute interior angles at each corner of a quadrilateral.
-
-    Args:
-        corners: Ordered 4x2 array of corner points
-
-    Returns:
-        List of 4 angles in degrees
-    """
-    angles = []
-    n = len(corners)
-    for i in range(n):
-        p1 = corners[(i - 1) % n]
-        p2 = corners[i]
-        p3 = corners[(i + 1) % n]
-
-        v1 = p1 - p2
-        v2 = p3 - p2
-
-        cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-8)
-        cos_angle = np.clip(cos_angle, -1, 1)
-        angle = np.degrees(np.arccos(cos_angle))
-        angles.append(angle)
-
-    return angles
 
 
 def get_quad_dimensions(corners: np.ndarray) -> Tuple[float, float]:
@@ -130,8 +101,11 @@ def score_card_candidate(
     """
     Score a quadrilateral candidate for being a credit card.
 
+    Since candidates come from minAreaRect, corners are always a perfect
+    rectangle. Scoring focuses on aspect ratio match and area coverage.
+
     Args:
-        contour: Original contour
+        contour: Original contour (minAreaRect box points)
         corners: 4 corner points
         image_area: Total image area for relative sizing
         aspect_ratio_tolerance: Allowed deviation from standard ratio
@@ -156,12 +130,12 @@ def score_card_candidate(
         details["reject_reason"] = f"area_ratio={area_ratio:.3f}"
         return 0.0, details
 
-    # Calculate aspect ratio (always use larger/smaller for consistency)
     # Safeguard against zero dimensions
     if width <= 0 or height <= 0:
         details["reject_reason"] = "invalid_dimensions"
         return 0.0, details
 
+    # Calculate aspect ratio (always use larger/smaller for consistency)
     if width > height:
         aspect_ratio = width / height
     else:
@@ -174,59 +148,19 @@ def score_card_candidate(
         details["reject_reason"] = f"aspect_ratio={aspect_ratio:.3f}, expected~{CARD_ASPECT_RATIO:.3f}"
         return 0.0, details
 
-    # Check corner angles (should be close to 90°)
-    angles = compute_corner_angles(ordered)
-    details["angles"] = angles
-    angle_deviations = [abs(a - 90) for a in angles]
-    max_deviation = max(angle_deviations)
-    if max_deviation > CORNER_ANGLE_TOLERANCE:
-        details["reject_reason"] = f"corner_angle_deviation={max_deviation:.1f}°"
-        return 0.0, details
-
-    # Check convexity
-    if not cv2.isContourConvex(ordered.astype(np.int32)):
-        details["reject_reason"] = "not_convex"
-        return 0.0, details
-
     # Compute score (higher is better)
-    # Favor: larger area, closer aspect ratio, more rectangular angles
+    # minAreaRect always produces perfect rectangles, so no angle check needed.
+    # Score based on area size and aspect ratio match.
     area_score = min(area_ratio / 0.1, 1.0)  # Normalize to max at 10% of image
     ratio_score = 1.0 - ratio_diff / aspect_ratio_tolerance
-    angle_score = 1.0 - max_deviation / CORNER_ANGLE_TOLERANCE
 
-    score = 0.4 * area_score + 0.3 * ratio_score + 0.3 * angle_score
+    score = 0.5 * area_score + 0.5 * ratio_score
     details["score_components"] = {
         "area": area_score,
         "ratio": ratio_score,
-        "angle": angle_score,
     }
 
     return score, details
-
-
-def refine_corners(gray: np.ndarray, corners: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Refine corner positions to sub-pixel accuracy using cornerSubPix.
-
-    Note: Credit cards have rounded corners (~3mm radius), so perfect corner
-    detection is inherently limited. This provides best-effort refinement.
-
-    Args:
-        gray: Grayscale image
-        corners: Initial corner positions (4x1x2 or 4x2 array)
-
-    Returns:
-        Refined corners or None if refinement fails
-    """
-    try:
-        corners_float = corners.reshape(-1, 1, 2).astype(np.float32)
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-
-        # Use larger search window (11x11) to handle rounded corners better
-        refined = cv2.cornerSubPix(gray, corners_float, (11, 11), (-1, -1), criteria)
-        return refined
-    except:
-        return None
 
 
 def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> List[np.ndarray]:
@@ -268,7 +202,12 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
     color_candidates = []
 
     def extract_quads(contours, epsilon_factor=0.02):
-        """Extract quadrilaterals from contours with different approximation factors."""
+        """Extract quadrilaterals from contours using minAreaRect.
+
+        Uses approxPolyDP only as a filter to verify the contour is roughly
+        rectangular, then fits a minimum-area rotated rectangle via minAreaRect
+        for precise corner positions (handles rounded corners naturally).
+        """
         quads = []
         for contour in contours:
             area = cv2.contourArea(contour)
@@ -276,27 +215,16 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
                 continue
 
             peri = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon_factor * peri, True)
 
-            # Try multiple epsilon values for polygon approximation
-            for eps in [epsilon_factor, epsilon_factor * 1.5, epsilon_factor * 2, epsilon_factor * 0.5]:
-                approx = cv2.approxPolyDP(contour, eps * peri, True)
+            # Filter: contour should be roughly quadrilateral (4-8 vertices)
+            if len(approx) < 4:
+                continue
 
-                if len(approx) == 4:
-                    # Refine corners to sub-pixel accuracy
-                    refined = refine_corners(gray, approx)
-                    quads.append(refined if refined is not None else approx)
-                    break
-                elif len(approx) > 4 and len(approx) <= 8:
-                    # Try to find 4 dominant corners using convex hull
-                    hull = cv2.convexHull(approx)
-                    if len(hull) >= 4:
-                        # Get the 4 corners with maximum area
-                        hull_approx = cv2.approxPolyDP(hull, 0.05 * cv2.arcLength(hull, True), True)
-                        if len(hull_approx) == 4:
-                            # Refine corners to sub-pixel accuracy
-                            refined = refine_corners(gray, hull_approx)
-                            quads.append(refined if refined is not None else hull_approx)
-                            break
+            # Use minAreaRect on the original contour for precise bounding box
+            rect = cv2.minAreaRect(contour)
+            box = cv2.boxPoints(rect).astype(np.float32)
+            quads.append(box.reshape(4, 1, 2))
 
         return quads
 

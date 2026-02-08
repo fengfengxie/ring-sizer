@@ -1369,3 +1369,29 @@ roi_mask = np.ones((roi_height, roi_width), dtype=np.uint8) * 255
 - `src/edge_refinement.py` - Full-ROI mask instead of finger segmentation mask (1 line)
 
 ---
+
+## Card Detection: Replace approxPolyDP with minAreaRect
+**Date:** 2026-02-08
+
+### Problem
+`cv2.approxPolyDP()` places corner vertices 5-15px inside the actual card boundary because credit cards have rounded corners (~3mm radius). Previous workarounds (gradient expansion, RANSAC line fitting, cornerSubPix refinement) added complexity without reliably solving the issue.
+
+### Solution
+Use `cv2.minAreaRect()` on the original contour instead of `approxPolyDP` for corner extraction. `minAreaRect` fits the minimum-area rotated rectangle around ALL contour points, naturally handling rounded corners. `approxPolyDP` is kept only as a filter to verify the contour is roughly quadrilateral (4+ vertices).
+
+### Changes
+- **`src/card_detection.py`**:
+  - `extract_quads()`: Replaced multi-epsilon `approxPolyDP` + convex hull fallback with `minAreaRect` + `boxPoints`
+  - `score_card_candidate()`: Removed corner angle check (redundant — `minAreaRect` always produces perfect 90° corners), simplified scoring to 50/50 area + aspect ratio
+  - Removed `compute_corner_angles()` — no longer needed
+  - Removed `refine_corners()` (cornerSubPix) — no longer needed
+  - Removed `CORNER_ANGLE_TOLERANCE` constant
+
+### Test Results
+
+| Image | Card Detected | Aspect Ratio | Confidence | Scale (px/cm) |
+|-------|--------------|--------------|------------|---------------|
+| test_sample2 | Yes | 1.545 | 0.91 | 203.46 |
+| test_sample4 | Yes | 1.619 | 0.93 | 371.39 |
+
+---
