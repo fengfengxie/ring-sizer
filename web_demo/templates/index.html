@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ring Size CV Demo</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="background-orbit"></div>
+  <div class="background-glow"></div>
+
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="hero-kicker">Ring Size CV · Web Demo</p>
+      <h1>上传一张照片，快速识别指环尺寸</h1>
+      <p class="hero-sub">
+        本地模型执行，不上传云端。识别结果会返回 JSON 与可视化叠图。
+      </p>
+    </div>
+    <div class="hero-card">
+      <form id="measureForm">
+        <label class="file-drop" for="imageInput">
+          <input id="imageInput" name="image" type="file" accept="image/*" />
+          <span class="file-title">点击或拖拽上传照片</span>
+          <span class="file-hint">支持 JPG / PNG · 建议 1080p 以上</span>
+        </label>
+
+        <div class="controls">
+          <label>
+            <span>指头选择</span>
+            <select name="finger_index">
+              <option value="index" selected>食指（默认）</option>
+              <option value="middle">中指</option>
+              <option value="ring">无名指</option>
+              <option value="pinky">小拇指</option>
+              <option value="auto">自动</option>
+            </select>
+          </label>
+          <label>
+            <span>边缘算法</span>
+            <select name="edge_method">
+              <option value="auto" selected>自动</option>
+              <option value="sobel">Sobel</option>
+              <option value="contour">Contour</option>
+              <option value="compare">Compare</option>
+            </select>
+          </label>
+        </div>
+
+        <button class="primary" type="submit">开始识别</button>
+        <p class="status" id="statusText">等待上传图片…</p>
+      </form>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="preview">
+      <div class="panel">
+        <h2>输入照片</h2>
+        <div class="image-frame" id="inputFrame">
+          <img id="inputPreview" alt="" />
+          <p class="placeholder">暂无图片</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>识别叠图</h2>
+        <div class="image-frame" id="debugFrame">
+          <img id="debugPreview" alt="" />
+          <p class="placeholder">等待生成</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="result">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>JSON 结果</h2>
+          <a id="jsonLink" class="ghost" href="#" target="_blank" rel="noreferrer">打开原始 JSON</a>
+        </div>
+        <pre id="jsonOutput">{}</pre>
+      </div>
+
+      <div class="panel tips">
+        <h2>拍摄建议</h2>
+        <ul>
+          <li>手指与银行卡同一平面，避免倾斜</li>
+          <li>光线均匀，避免强烈阴影</li>
+          <li>指尖伸直、戒指佩戴区露出</li>
+          <li>拍摄分辨率越高，精度越好</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

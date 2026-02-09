@@ -22,6 +22,8 @@ output/intermediate/
 output/card_detection_debug/
 output/finger_segmentation_debug/
 output/edge_refinement_debug/
+web_demo/uploads/
+web_demo/results/
 
 # Downloaded models (auto-downloaded on first run)
 model/*.task

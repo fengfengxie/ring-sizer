@@ -21,18 +21,14 @@ from pathlib import Path
 # Import debug observer and drawing functions
 from src.debug_observer import (
     DebugObserver,
-    save_debug_image,
     draw_landmarks_overlay,
     draw_hand_skeleton,
     draw_detection_info,
-    draw_extension_scores,
-    draw_component_stats,
-    FINGER_COLORS,
 )
 
 # Import visualization constants
 from src.viz_constants import (
-    FONT_FACE, FontScale, FontThickness, Color, Size, Layout
+    FONT_FACE, FontScale, FontThickness, Color
 )
 
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -465,7 +461,7 @@ def segment_hand(
                              f"det={rotation_code}, orient={orientation_rotation}")
 
     # Generate hand mask at canonical resolution
-    mask = _create_hand_mask(landmarks_canonical, (can_full_h, can_full_w), observer)
+    mask = _create_hand_mask(landmarks_canonical, (can_full_h, can_full_w))
 
     return {
         "landmarks": landmarks_canonical,
@@ -479,15 +475,13 @@ def segment_hand(
     }
 
 
-def _create_hand_mask(landmarks: np.ndarray, shape: Tuple[int, int],
-                      observer: Optional[DebugObserver] = None) -> np.ndarray:
+def _create_hand_mask(landmarks: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
     """
     Create a binary mask of the hand region from landmarks.
 
     Args:
         landmarks: 21x2 array of landmark pixel coordinates
         shape: (height, width) of output mask
-        observer: Optional debug observer for saving debug images
 
     Returns:
         Binary mask (uint8, 0 or 255)
@@ -499,58 +493,19 @@ def _create_hand_mask(landmarks: np.ndarray, shape: Tuple[int, int],
     hull_points = cv2.convexHull(landmarks.astype(np.int32))
     cv2.fillConvexPoly(mask, hull_points, 255)
 
-    # Debug: Save convex hull mask
-    if observer:
-        hull_img = cv2.cvtColor(mask.copy(), cv2.COLOR_GRAY2BGR)
-        # Draw hull outline
-        cv2.polylines(hull_img, [hull_points], True, Color.GREEN, Size.CONTOUR_THICK)
-        observer.save_stage("07_convex_hull", hull_img)
-
     # Also fill individual finger regions for better coverage
-    finger_mask = mask.copy()
     for finger_name, indices in FINGER_LANDMARKS.items():
         finger_pts = landmarks[indices].astype(np.int32)
-        # Create a polygon along the finger
-        cv2.fillConvexPoly(finger_mask, finger_pts, 255)
+        cv2.fillConvexPoly(mask, finger_pts, 255)
 
     # Fill thumb
     thumb_pts = landmarks[THUMB_LANDMARKS].astype(np.int32)
-    cv2.fillConvexPoly(finger_mask, thumb_pts, 255)
-
-    # Debug: Save finger regions visualization
-    if observer:
-        # Create colored finger regions using existing helper
-        finger_color_img = np.zeros((h, w, 3), dtype=np.uint8)
-        for finger_name, indices in FINGER_LANDMARKS.items():
-            finger_pts = landmarks[indices].astype(np.int32)
-            cv2.fillConvexPoly(finger_color_img, finger_pts, FINGER_COLORS[finger_name])
-        cv2.fillConvexPoly(finger_color_img, thumb_pts, FINGER_COLORS["thumb"])
-        observer.save_stage("08_finger_regions", finger_color_img)
-
-        # Save raw combined mask
-        observer.save_stage("09_raw_hand_mask", finger_mask)
-
-    mask = finger_mask
+    cv2.fillConvexPoly(mask, thumb_pts, 255)
 
     # Apply morphological operations to smooth the mask
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-
-    # Morphological closing (fill gaps)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    if observer:
-        observer.save_stage("10_morph_close", mask)
-
-    # Morphological opening (remove noise)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    if observer:
-        observer.save_stage("11_morph_open", mask)
-
-        # Save final mask with semi-transparent overlay
-        mask_colored = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-        # Create green tint for final mask
-        mask_overlay = np.zeros((h, w, 3), dtype=np.uint8)
-        mask_overlay[mask > 0] = Color.GREEN
-        observer.save_stage("12_final_hand_mask", mask_overlay)
 
     return mask
 
@@ -759,8 +714,6 @@ def isolate_finger(
     hand_data: Dict[str, Any],
     finger: FingerIndex = "auto",
     image_shape: Optional[Tuple[int, int]] = None,
-    image: Optional[np.ndarray] = None,
-    debug_dir: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Isolate a specific finger from hand segmentation data.
@@ -769,8 +722,6 @@ def isolate_finger(
         hand_data: Output from segment_hand()
         finger: Which finger to isolate, or "auto" to select most extended
         image_shape: (height, width) for mask generation
-        image: Optional original image for debug visualization
-        debug_dir: Optional directory to save debug images
 
     Returns:
         Dictionary containing:
@@ -781,28 +732,21 @@ def isolate_finger(
         - finger_name: Name of the isolated finger
         Or None if finger cannot be isolated
     """
-    # Create debug observer if debug mode enabled
-    observer = DebugObserver(debug_dir) if debug_dir else None
-    
     landmarks = hand_data["landmarks"]
 
     if image_shape is None:
-        # Estimate from hand mask
         if "mask" in hand_data:
             image_shape = hand_data["mask"].shape[:2]
         else:
             return None
 
     # Determine which finger to use
-    extension_scores = {}
     if finger == "auto":
-        # Find the most extended finger
         best_finger = None
         best_score = -1
 
         for finger_name, indices in FINGER_LANDMARKS.items():
             score = _calculate_finger_extension(landmarks, indices)
-            extension_scores[finger_name] = score
             if score > best_score:
                 best_score = score
                 best_finger = finger_name
@@ -811,122 +755,38 @@ def isolate_finger(
             return None
         finger = best_finger
 
-        # Debug: Draw extension scores
-        if observer and image is not None:
-            observer.draw_and_save("13_finger_extension_scores", image,
-                                 draw_extension_scores, extension_scores, finger)
-
     if finger not in FINGER_LANDMARKS:
         return None
 
     indices = FINGER_LANDMARKS[finger]
     finger_landmarks = landmarks[indices]
 
-    # Debug: Highlight selected finger landmarks
-    if observer and image is not None:
-        selected_img = image.copy()
-        for i, (x, y) in enumerate(finger_landmarks):
-            color = Color.GREEN if i == 0 else (Color.YELLOW if i == 3 else Color.CYAN)
-            cv2.circle(selected_img, (int(x), int(y)), Size.ENDPOINT_RADIUS, color, -1)
-            cv2.circle(selected_img, (int(x), int(y)), Size.ENDPOINT_RADIUS, Color.BLACK, 2)
-
-            # Label landmarks
-            labels = ["MCP", "PIP", "DIP", "TIP"]
-            cv2.putText(selected_img, labels[i], (int(x) + 20, int(y)), FONT_FACE,
-                       FontScale.SMALL, Color.BLACK, FontThickness.BODY + 2, cv2.LINE_AA)
-            cv2.putText(selected_img, labels[i], (int(x) + 20, int(y)), FONT_FACE,
-                       FontScale.SMALL, Color.WHITE, FontThickness.BODY, cv2.LINE_AA)
-        observer.save_stage("14_selected_finger_landmarks", selected_img)
-
     # Create finger mask using pixel-level approach (preferred)
-    # This preserves actual finger edges from MediaPipe hand segmentation
-    mask_pixel = None
-    mask_polygon = None
+    mask = None
     method_used = "unknown"
 
     if "mask" in hand_data and hand_data["mask"] is not None:
-        # Try pixel-level approach first (more accurate)
-        mask_pixel = _isolate_finger_from_hand_mask(
+        mask = _isolate_finger_from_hand_mask(
             hand_data["mask"],
             finger_landmarks,
             landmarks,
             min_area=500,
         )
-
-        if mask_pixel is not None:
-            mask = mask_pixel
+        if mask is not None:
             method_used = "pixel-level"
             print(f"  Finger isolated using pixel-level segmentation")
-
-            # In debug mode, also generate polygon for comparison
-            if observer:
-                mask_polygon = _create_finger_mask(landmarks, indices, image_shape,
-                                                   image=image, observer=observer)
         else:
             print(f"  Pixel-level segmentation failed, falling back to polygon")
 
     # Fallback to polygon-based approach
-    if mask_pixel is None:
-        mask_polygon = _create_finger_mask(landmarks, indices, image_shape,
-                                           image=image, observer=observer)
-        if mask_polygon is not None:
-            mask = mask_polygon
+    if mask is None:
+        mask = _create_finger_mask(landmarks, indices, image_shape)
+        if mask is not None:
             method_used = "polygon"
             print(f"  Finger isolated using polygon-based segmentation (fallback)")
         else:
             print(f"  Both segmentation methods failed")
             return None
-
-    # Debug: Compare both methods if available
-    if observer and image is not None:
-        # Create comparison image
-        if mask_pixel is not None and mask_polygon is not None:
-            comparison_img = image.copy()
-
-            # Draw polygon contour in red
-            contours_poly, _ = cv2.findContours(mask_polygon, cv2.RETR_EXTERNAL,
-                                               cv2.CHAIN_APPROX_SIMPLE)
-            if contours_poly:
-                cv2.drawContours(comparison_img, contours_poly, -1, Color.RED,
-                               Size.CONTOUR_THICK, cv2.LINE_AA)
-
-            # Draw pixel-level contour in green
-            contours_pixel, _ = cv2.findContours(mask_pixel, cv2.RETR_EXTERNAL,
-                                                 cv2.CHAIN_APPROX_SIMPLE)
-            if contours_pixel:
-                cv2.drawContours(comparison_img, contours_pixel, -1, Color.GREEN,
-                               Size.CONTOUR_THICK, cv2.LINE_AA)
-
-            # Add legend
-            y = Layout.TITLE_Y
-            texts = [
-                ("Pixel-level (accurate)", Color.GREEN),
-                ("Polygon (synthetic)", Color.RED),
-            ]
-            for text, color in texts:
-                cv2.putText(comparison_img, text, (Layout.TEXT_OFFSET_X, y), FONT_FACE,
-                           FontScale.BODY, Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-                cv2.putText(comparison_img, text, (Layout.TEXT_OFFSET_X, y), FONT_FACE,
-                           FontScale.BODY, color, FontThickness.LABEL, cv2.LINE_AA)
-                y += Layout.LINE_SPACING
-
-            observer.save_stage("17a_method_comparison", comparison_img)
-
-        # Overlay final mask on original
-        mask_overlay = image.copy()
-        mask_colored = np.zeros_like(image)
-        color = Color.GREEN if method_used == "pixel-level" else Color.MAGENTA
-        mask_colored[mask > 0] = color
-        mask_overlay = cv2.addWeighted(mask_overlay, 0.6, mask_colored, 0.4, 0)
-
-        # Add method label
-        text = f"Method: {method_used}"
-        cv2.putText(mask_overlay, text, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y), FONT_FACE,
-                   FontScale.BODY, Color.BLACK, FontThickness.LABEL_OUTLINE, cv2.LINE_AA)
-        cv2.putText(mask_overlay, text, (Layout.TEXT_OFFSET_X, Layout.TITLE_Y), FONT_FACE,
-                   FontScale.BODY, Color.WHITE, FontThickness.LABEL, cv2.LINE_AA)
-
-        observer.save_stage("18_finger_mask_overlay", mask_overlay)
 
     return {
         "mask": mask,
@@ -934,7 +794,7 @@ def isolate_finger(
         "base_point": finger_landmarks[0],  # MCP joint
         "tip_point": finger_landmarks[3],   # Fingertip
         "finger_name": finger,
-        "method": method_used,  # Track which method was used
+        "method": method_used,
     }
 
 
@@ -943,19 +803,17 @@ def _create_finger_mask(
     finger_indices: List[int],
     shape: Tuple[int, int],
     width_factor: float = 2.5,
-    image: Optional[np.ndarray] = None,
-    observer: Optional[DebugObserver] = None,
 ) -> Optional[np.ndarray]:
     """
-    Create a binary mask for a single finger.
+    Create a binary mask for a single finger using polygon approximation.
+
+    This is the fallback method when pixel-level segmentation fails.
 
     Args:
         all_landmarks: All 21 hand landmarks
         finger_indices: Indices of the 4 finger landmarks
         shape: (height, width) of output mask
         width_factor: Multiplier for estimated finger width
-        image: Optional original image for debug visualization
-        observer: Optional debug observer for debug images
 
     Returns:
         Binary mask of finger region
@@ -966,10 +824,8 @@ def _create_finger_mask(
     finger_landmarks = all_landmarks[finger_indices]
 
     # Estimate finger width based on joint spacing
-    # Use the distance between adjacent fingers as reference
     mcp_idx = finger_indices[0]
 
-    # Find adjacent finger MCPs for width estimation
     adjacent_distances = []
     for other_finger, other_indices in FINGER_LANDMARKS.items():
         other_mcp = other_indices[0]
@@ -978,37 +834,30 @@ def _create_finger_mask(
             adjacent_distances.append(dist)
 
     if adjacent_distances:
-        # Finger width is approximately 1/3 to 1/2 of inter-finger distance
         estimated_width = min(adjacent_distances) * 0.4 * width_factor
     else:
-        # Fallback: use finger length / 6
         finger_length = np.linalg.norm(finger_landmarks[3] - finger_landmarks[0])
         estimated_width = finger_length / 6 * width_factor
 
     # Create polygon along finger with estimated width
-    # For each landmark, create left and right edge points
     polygon_points = []
 
     for i in range(len(finger_landmarks)):
         pt = finger_landmarks[i]
 
-        # Direction along finger
         if i < len(finger_landmarks) - 1:
             direction = finger_landmarks[i + 1] - pt
         else:
             direction = pt - finger_landmarks[i - 1]
 
-        # Perpendicular direction
         perp = np.array([-direction[1], direction[0]])
         perp_norm = np.linalg.norm(perp)
         if perp_norm > 0:
             perp = perp / perp_norm
 
-        # Width varies along finger (wider at base, narrower at tip)
         width_scale = 1.0 - 0.3 * (i / (len(finger_landmarks) - 1))
         half_width = estimated_width * width_scale / 2
 
-        # Add left and right points
         left = pt + perp * half_width
         right = pt - perp * half_width
         polygon_points.append((left, right))
@@ -1021,34 +870,18 @@ def _create_finger_mask(
         polygon.append(right)
 
     polygon = np.array(polygon, dtype=np.int32)
-
-    # Debug: Visualize finger polygon construction
-    if observer and image is not None:
-        polygon_img = image.copy()
-        # Draw left and right edges
-        for i, (left, right) in enumerate(polygon_points):
-            cv2.circle(polygon_img, (int(left[0]), int(left[1])), 5, Color.GREEN, -1)
-            cv2.circle(polygon_img, (int(right[0]), int(right[1])), 5, Color.RED, -1)
-        # Draw polygon outline
-        cv2.polylines(polygon_img, [polygon], True, Color.CYAN, Size.LINE_THICK)
-        observer.save_stage("15_finger_polygon", polygon_img)
-
-    # Fill the polygon
     cv2.fillPoly(mask, [polygon], 255)
 
-    # Extend mask slightly towards palm for complete finger coverage
-    # Add a region from MCP towards wrist
+    # Extend mask slightly towards palm
     mcp = finger_landmarks[0]
     wrist = all_landmarks[WRIST_LANDMARK]
     palm_direction = mcp - wrist
     palm_direction = palm_direction / (np.linalg.norm(palm_direction) + 1e-8)
 
-    # Extend base by ~20% of finger length towards palm
     finger_length = np.linalg.norm(finger_landmarks[3] - finger_landmarks[0])
     extension = palm_direction * finger_length * 0.15
     extended_base = mcp - extension
 
-    # Create extension polygon
     perp = np.array([-palm_direction[1], palm_direction[0]])
     half_width = estimated_width / 2
     ext_polygon = np.array([
@@ -1058,21 +891,7 @@ def _create_finger_mask(
         extended_base + perp * half_width * 0.8,
     ], dtype=np.int32)
 
-    # Debug: Visualize palm extension
-    if observer and image is not None:
-        ext_img = image.copy()
-        cv2.fillPoly(ext_img, [ext_polygon], Color.YELLOW)
-        # Draw direction vector
-        cv2.arrowedLine(ext_img, (int(mcp[0]), int(mcp[1])),
-                       (int(extended_base[0]), int(extended_base[1])),
-                       Color.CYAN, Size.LINE_THICK, tipLength=0.3)
-        observer.save_stage("16_palm_extension", ext_img)
-
     cv2.fillPoly(mask, [ext_polygon], 255)
-
-    # Debug: Save raw finger mask
-    if observer:
-        observer.save_stage("17_raw_finger_mask", mask)
 
     return mask
 
@@ -1133,7 +952,6 @@ def clean_mask(
 def get_finger_contour(
     mask: np.ndarray,
     smooth: bool = True,
-    debug_dir: Optional[str] = None,
 ) -> Optional[np.ndarray]:
     """
     Extract outer contour from finger mask.
@@ -1141,7 +959,6 @@ def get_finger_contour(
     Args:
         mask: Binary finger mask
         smooth: Whether to apply contour smoothing
-        debug_dir: Optional directory to save debug images (currently unused, contours shown in main debug overlay)
 
     Returns:
         Contour points as Nx2 array, or None if no contour found

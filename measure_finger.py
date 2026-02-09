@@ -333,8 +333,7 @@ def measure_finger(
 
     # Phase 5: Finger isolation (hand already segmented in Phase 3)
     h_can, w_can = image_canonical.shape[:2]
-    finger_data = isolate_finger(hand_data, finger=finger_index, image_shape=(h_can, w_can),
-                                 image=image_canonical, debug_dir=finger_debug_dir)
+    finger_data = isolate_finger(hand_data, finger=finger_index, image_shape=(h_can, w_can))
 
     if finger_data is None:
         print(f"Could not isolate finger: {finger_index}")
@@ -362,7 +361,7 @@ def measure_finger(
         )
 
     # Extract finger contour
-    contour = get_finger_contour(cleaned_mask, debug_dir=finger_debug_dir)
+    contour = get_finger_contour(cleaned_mask)
 
     if contour is None:
         print("Could not extract finger contour")
