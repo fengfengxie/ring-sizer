@@ -63,7 +63,7 @@ form.addEventListener("submit", async (event) => {
     jsonLink.href = data.result_json_url || "#";
 
     showImage(inputPreview, inputFrame, data.input_image_url);
-    showImage(debugPreview, debugFrame, data.debug_image_url);
+    showImage(debugPreview, debugFrame, data.result_image_url);
 
     if (data.success) {
       setStatus("识别完成，结果已更新");

@@ -80,14 +80,15 @@ def api_measure():
     if image is None:
         return jsonify({"success": False, "error": "Failed to load image"}), 400
 
-    debug_name = f"{run_id}__debug.png"
-    debug_path = RESULTS_DIR / debug_name
+    result_png_name = f"{run_id}__result.png"
+    result_png_path = RESULTS_DIR / result_png_name
 
     result = measure_finger(
         image=image,
         finger_index=finger_index,
         edge_method=edge_method,
-        debug_path=str(debug_path),
+        result_png_path=str(result_png_path),
+        save_debug=False,
     )
 
     result_json_name = f"{run_id}__result.json"
@@ -97,7 +98,7 @@ def api_measure():
     payload = {
         "success": result.get("fail_reason") is None,
         "result": result,
-        "debug_image_url": f"/results/{debug_name}",
+        "result_image_url": f"/results/{result_png_name}",
         "input_image_url": f"/uploads/{upload_name}",
         "result_json_url": f"/results/{result_json_name}",
     }
