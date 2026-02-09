@@ -30,7 +30,7 @@ from src.confidence import (
     compute_edge_quality_confidence,
     compute_overall_confidence,
 )
-from src.visualization import create_debug_visualization
+from src.debug_observer import draw_comprehensive_edge_overlay
 
 # Type alias for finger selection
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
@@ -407,6 +407,8 @@ def measure_finger(
     #rotation_threshold = 2.0  # Only rotate if > 2° off vertical
     rotation_threshold = 0.0  # always rorate to upright
 
+    rotation_matrix = None  # Track rotation for card corner transform in debug
+
     if abs(angle_from_vertical) >= rotation_threshold:
         print(f"Finger axis is {angle_from_vertical:.1f}° from vertical, applying precise rotation...")
 
@@ -654,17 +656,37 @@ def measure_finger(
     # Phase 9: Debug visualization
     if debug_path is not None:
         print(f"Generating debug visualization...")
-        debug_image = create_debug_visualization(
-            image=image_canonical,  # Use canonical orientation
-            card_result=card_result,
-            contour=contour,
-            axis_data=axis_data,
-            zone_data=zone_data,
-            width_data=final_measurement,
-            measurement_cm=median_width_cm,
-            confidence=confidence_breakdown['overall'],
-            scale_px_per_cm=px_per_cm,
-        )
+
+        # Use comprehensive edge overlay (based on Sobel data) + card bounding box
+        if sobel_measurement and not sobel_failed:
+            edge_data = sobel_measurement["edge_data"]
+            roi_bounds = sobel_measurement["roi_data"]["roi_bounds"]
+            width_data = sobel_measurement["width_data"]
+            width_data["median_width_cm"] = sobel_measurement["median_width_cm"]
+
+            debug_image = draw_comprehensive_edge_overlay(
+                full_image=image_canonical,
+                edge_data=edge_data,
+                roi_bounds=roi_bounds,
+                axis_data=axis_data,
+                zone_data=zone_data,
+                width_data=width_data,
+                scale_px_per_cm=px_per_cm,
+            )
+        else:
+            # Fallback: plain image with axis/zone annotations when Sobel unavailable
+            debug_image = image_canonical.copy()
+
+        # Draw card bounding box (transform corners if image was rotated)
+        if card_result is not None and "corners" in card_result:
+            corners = card_result["corners"]
+            if corners is not None:
+                pts = np.array(corners, dtype=np.float32)
+                if rotation_matrix is not None:
+                    pts = transform_points_rotation(pts, rotation_matrix)
+                pts = pts.astype(np.int32).reshape((-1, 1, 2))
+                cv2.polylines(debug_image, [pts], isClosed=True,
+                              color=(0, 255, 0), thickness=3, lineType=cv2.LINE_AA)
 
         # Save debug image
         Path(debug_path).parent.mkdir(parents=True, exist_ok=True)
