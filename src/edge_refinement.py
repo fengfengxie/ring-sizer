@@ -1023,7 +1023,6 @@ def refine_edges_sobel(
     kernel_size: int = DEFAULT_KERNEL_SIZE,
     rotate_align: bool = False,
     expected_width_px: Optional[float] = None,
-    edge_detection_method: str = "per_row",
     debug_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -1034,7 +1033,7 @@ def refine_edges_sobel(
     Pipeline:
     1. Extract ROI around ring zone
     2. Apply bidirectional Sobel filters
-    3. Detect left/right edges (per-row or canny-contour method)
+    3. Detect left/right edges per row
     4. Measure width from edges
     5. Convert to cm and return measurement
 
@@ -1049,7 +1048,6 @@ def refine_edges_sobel(
         kernel_size: Sobel kernel size (3, 5, or 7)
         rotate_align: Rotate ROI for vertical finger alignment
         expected_width_px: Expected width for validation (optional)
-        edge_detection_method: "per_row" (default) or "canny_contour"
         debug_dir: Directory to save debug visualizations (None to skip)
 
     Returns:
@@ -1145,28 +1143,13 @@ def refine_edges_sobel(
                 logger.debug(f"Failed to generate {technique} filter: {e}")
                 continue
 
-    # Step 3: Detect edges (choose method)
-    if edge_detection_method == "canny_contour":
-        from src.edge_detection_canny import detect_edges_canny_contour
-        logger.debug("Using Canny-contour edge detection method")
-        edge_data = detect_edges_canny_contour(
-            gradient_data, roi_data,
-            threshold_low_percentile=30.0,
-            threshold_high_percentile=70.0,
-            morph_kernel_height=15,
-            min_contour_length=50,
-            border_search_width=30,
-            fit_method="ransac",
-            debug_dir=debug_dir
-        )
-    else:  # Default: per_row method
-        logger.debug("Using per-row edge detection method")
-        edge_data = detect_edges_per_row(
-            gradient_data, roi_data,
-            threshold=sobel_threshold,
-            expected_width_px=expected_width_px,
-            scale_px_per_cm=scale_px_per_cm
-        )
+    # Step 3: Detect edges per row
+    edge_data = detect_edges_per_row(
+        gradient_data, roi_data,
+        threshold=sobel_threshold,
+        expected_width_px=expected_width_px,
+        scale_px_per_cm=scale_px_per_cm
+    )
 
     logger.debug(f"Valid rows: {edge_data['num_valid_rows']}/{len(edge_data['valid_rows'])} ({edge_data['num_valid_rows']/len(edge_data['valid_rows'])*100:.1f}%)")
     if edge_data['num_valid_rows'] > 0:

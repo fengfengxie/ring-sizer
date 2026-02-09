@@ -112,13 +112,6 @@ Examples:
         help="Sobel kernel size (default: 3)",
     )
     parser.add_argument(
-        "--edge-detection-method",
-        type=str,
-        default="per_row",
-        choices=["per_row", "canny_contour"],
-        help="Edge detection method: per_row (default) or canny_contour (experimental)",
-    )
-    parser.add_argument(
         "--no-subpixel",
         action="store_true",
         help="Disable sub-pixel edge refinement",
@@ -241,7 +234,6 @@ def measure_finger(
     edge_method: str = "auto",
     sobel_threshold: float = 15.0,
     sobel_kernel_size: int = 3,
-    edge_detection_method: str = "per_row",
     use_subpixel: bool = True,
     skip_card_detection: bool = False,
 ) -> Dict[str, Any]:
@@ -528,7 +520,6 @@ def measure_finger(
                 finger_landmarks=finger_data.get("landmarks"),
                 sobel_threshold=sobel_threshold,
                 kernel_size=sobel_kernel_size,
-                edge_detection_method=edge_detection_method,
                 debug_dir=edge_debug_dir,
             )
 
@@ -723,7 +714,6 @@ def main() -> int:
         edge_method=args.edge_method,
         sobel_threshold=args.sobel_threshold,
         sobel_kernel_size=args.sobel_kernel_size,
-        edge_detection_method=args.edge_detection_method,
         use_subpixel=not args.no_subpixel,
         skip_card_detection=args.skip_card_detection,
     )
