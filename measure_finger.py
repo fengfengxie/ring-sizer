@@ -6,7 +6,7 @@ Measures the outer width (diameter) of a finger at the ring-wearing zone
 using a single RGB image with a credit card as a physical size reference.
 
 Usage:
-    python measure_finger.py --input image.jpg --output result.json [--debug debug.png]
+    python measure_finger.py --input image.jpg --output result.json [--debug]
 """
 
 import argparse
@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
     python measure_finger.py --input photo.jpg --output result.json
-    python measure_finger.py --input photo.jpg --output result.json --debug overlay.png
+    python measure_finger.py --input photo.jpg --output result.json --debug
     python measure_finger.py --input photo.jpg --output result.json --finger-index ring
     python measure_finger.py --input photo.jpg --output result.json --finger-index middle
         """,
@@ -67,9 +67,9 @@ Examples:
     # Optional arguments
     parser.add_argument(
         "--debug",
-        type=str,
-        default=None,
-        help="Path to save debug visualization (PNG)",
+        action="store_true",
+        default=False,
+        help="Save intermediate debug images (card_detection_debug/, edge_refinement_debug/, etc.)",
     )
     parser.add_argument(
         "--save-intermediate",
@@ -230,7 +230,8 @@ def measure_finger(
     finger_index: FingerIndex = "index",
     confidence_threshold: float = 0.7,
     save_intermediate: bool = False,
-    debug_path: Optional[str] = None,
+    result_png_path: Optional[str] = None,
+    save_debug: bool = False,
     edge_method: str = "auto",
     sobel_threshold: float = 15.0,
     sobel_kernel_size: int = 3,
@@ -245,7 +246,8 @@ def measure_finger(
         finger_index: Which finger to measure
         confidence_threshold: Minimum confidence threshold
         save_intermediate: Whether to save intermediate artifacts
-        debug_path: Path to save debug visualization
+        result_png_path: Path to save result visualization PNG (always generated)
+        save_debug: Whether to save intermediate debug images
         edge_method: Edge detection method (auto, contour, sobel, compare)
         sobel_threshold: Minimum gradient magnitude for valid edge
         sobel_kernel_size: Sobel kernel size (3, 5, or 7)
@@ -269,9 +271,8 @@ def measure_finger(
     # This allows us to rotate the image to canonical orientation first
     # Create finger segmentation debug subdirectory if debug enabled
     finger_debug_dir = None
-    if debug_path is not None:
-        from pathlib import Path
-        finger_debug_dir = str(Path(debug_path).parent / "finger_segmentation_debug")
+    if save_debug and result_png_path is not None:
+        finger_debug_dir = str(Path(result_png_path).parent / "finger_segmentation_debug")
 
     hand_data = segment_hand(image, finger=finger_index, debug_dir=finger_debug_dir)
 
@@ -299,9 +300,8 @@ def measure_finger(
     # Phase 4: Credit card detection & scale calibration (NOW ON CANONICAL IMAGE)
     # Create card detection debug subdirectory if debug enabled
     card_debug_dir = None
-    if debug_path is not None:
-        from pathlib import Path
-        card_debug_dir = str(Path(debug_path).parent / "card_detection_debug")
+    if save_debug and result_png_path is not None:
+        card_debug_dir = str(Path(result_png_path).parent / "card_detection_debug")
 
     # Allow skipping card detection for testing finger segmentation
     if skip_card_detection:
@@ -507,10 +507,10 @@ def measure_finger(
         try:
             print(f"Running Sobel edge refinement (threshold={sobel_threshold}, kernel={sobel_kernel_size})...")
             
-            # Create debug directory for edge refinement if main debug is enabled
+            # Create debug directory for edge refinement if debug enabled
             edge_debug_dir = None
-            if debug_path is not None:
-                edge_debug_dir = str(Path(debug_path).parent / "edge_refinement_debug")
+            if save_debug and result_png_path is not None:
+                edge_debug_dir = str(Path(result_png_path).parent / "edge_refinement_debug")
             
             sobel_measurement = refine_edges_sobel(
                 image=image_canonical,  # Use canonical orientation
@@ -653,9 +653,9 @@ def measure_finger(
     print(f"Confidence: {confidence_breakdown['overall']:.3f} ({confidence_breakdown['level']}) "
           f"[{', '.join(conf_parts)}]")
 
-    # Phase 9: Debug visualization
-    if debug_path is not None:
-        print(f"Generating debug visualization...")
+    # Phase 9: Result visualization (always generated)
+    if result_png_path is not None:
+        print(f"Generating result visualization...")
 
         # Use comprehensive edge overlay (based on Sobel data) + card bounding box
         if sobel_measurement and not sobel_failed:
@@ -688,10 +688,10 @@ def measure_finger(
                 cv2.polylines(debug_image, [pts], isClosed=True,
                               color=(0, 255, 0), thickness=3, lineType=cv2.LINE_AA)
 
-        # Save debug image
-        Path(debug_path).parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(debug_path, debug_image)
-        print(f"Debug visualization saved to: {debug_path} (canonical orientation)")
+        # Save result image
+        Path(result_png_path).parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(result_png_path, debug_image)
+        print(f"Result visualization saved to: {result_png_path}")
 
 
     return create_output(
@@ -725,13 +725,17 @@ def main() -> int:
 
     print(f"Loaded image: {args.input} ({image.shape[1]}x{image.shape[0]})")
 
+    # Derive result PNG path from output JSON path
+    result_png_path = str(Path(args.output).with_suffix(".png"))
+
     # Run measurement pipeline
     result = measure_finger(
         image=image,
         finger_index=args.finger_index,
         confidence_threshold=args.confidence_threshold,
         save_intermediate=args.save_intermediate,
-        debug_path=args.debug,
+        result_png_path=result_png_path,
+        save_debug=args.debug,
         edge_method=args.edge_method,
         sobel_threshold=args.sobel_threshold,
         sobel_kernel_size=args.sobel_kernel_size,

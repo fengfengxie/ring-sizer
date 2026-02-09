@@ -1395,3 +1395,26 @@ Use `cv2.minAreaRect()` on the original contour instead of `approxPolyDP` for co
 | test_sample4 | Yes | 1.619 | 0.93 | 371.39 |
 
 ---
+
+## Code Cleanup & Output Refactoring
+**Date:** 2026-02-09
+
+### Debug Output Replaced with Comprehensive Edge Overlay
+- Replaced `create_debug_visualization()` (from `src/visualization.py`) with `draw_comprehensive_edge_overlay()` (from `src/debug_observer.py`) as the main result image
+- Added card bounding box (green polygon) to the overlay, with proper rotation transform to match canonical orientation
+- Fixed bug: card corners were in pre-rotation coordinates; now transformed via `rotation_matrix`
+
+### Result PNG Always Generated
+- `--output result.json` now always produces a companion `result.png` alongside the JSON
+- `--debug` flag changed from path argument to boolean flag; controls only intermediate debug subdirectories (card_detection_debug/, edge_refinement_debug/, finger_segmentation_debug/)
+- Result visualization is always generated regardless of `--debug`
+
+### Changes
+- **`measure_finger.py`**:
+  - Replaced `debug_path` parameter with `result_png_path` + `save_debug` boolean
+  - Result PNG path auto-derived from `--output` path (`.json` → `.png`)
+  - Phase 9 now always generates result visualization using `draw_comprehensive_edge_overlay()`
+  - Card bounding box corners transformed by `rotation_matrix` before drawing
+  - Import changed from `src.visualization` to `src.debug_observer`
+
+---
