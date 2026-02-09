@@ -163,20 +163,33 @@ def score_card_candidate(
     return score, details
 
 
-def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> List[np.ndarray]:
+def find_card_contours(
+    image: np.ndarray,
+    image_area: float,
+    aspect_ratio_tolerance: float = 0.15,
+    min_score: float = 0.3,
+    debug_dir: Optional[str] = None,
+) -> List[np.ndarray]:
     """
-    Find potential card contours using multiple detection strategies.
+    Find potential card contours using a waterfall of detection strategies.
+
+    Strategies are tried in order: Canny → Adaptive → Otsu → Color.
+    If a strategy produces a candidate scoring above min_score, subsequent
+    strategies are skipped.
 
     Args:
         image: Input BGR image
+        image_area: Total image area in pixels
+        aspect_ratio_tolerance: Allowed deviation from standard aspect ratio
+        min_score: Minimum score to accept a strategy's candidates
         debug_dir: Optional directory to save debug images
 
     Returns:
-        List of 4-point contour approximations
+        List of 4-point contour approximations from the first successful strategy
     """
     # Create debug observer if debug mode enabled
     observer = DebugObserver(debug_dir) if debug_dir else None
-    
+
     h, w = image.shape[:2]
     min_area = h * w * 0.01  # At least 1% of image
     max_area = h * w * 0.5   # At most 50% of image
@@ -195,72 +208,121 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
     if observer:
         observer.save_stage("03_bilateral_filtered", filtered)
 
-    candidates = []
-    canny_candidates = []
-    adaptive_candidates = []
-    otsu_candidates = []
-    color_candidates = []
-
-    def extract_quads(contours, epsilon_factor=0.02):
+    def extract_quads(contours, epsilon_factor=0.02, min_rectangularity=0.7,
+                       aspect_tolerance=0.15):
         """Extract quadrilaterals from contours using minAreaRect.
 
-        Uses approxPolyDP only as a filter to verify the contour is roughly
-        rectangular, then fits a minimum-area rotated rectangle via minAreaRect
-        for precise corner positions (handles rounded corners naturally).
+        Shape constraints:
+        - Rectangularity (contour_area / rect_area): rejects irregular shapes
+        - Aspect ratio: rejects rectangles that don't match card proportions
         """
         quads = []
         for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < min_area or area > max_area:
+            contour_area = cv2.contourArea(contour)
+            if contour_area < min_area or contour_area > max_area:
                 continue
 
             peri = cv2.arcLength(contour, True)
             approx = cv2.approxPolyDP(contour, epsilon_factor * peri, True)
 
-            # Filter: contour should be roughly quadrilateral (4-8 vertices)
             if len(approx) < 4:
                 continue
 
-            # Use minAreaRect on the original contour for precise bounding box
             rect = cv2.minAreaRect(contour)
             box = cv2.boxPoints(rect).astype(np.float32)
+
+            rect_area = cv2.contourArea(box)
+            if rect_area <= 0:
+                continue
+            rectangularity = contour_area / rect_area
+            if rectangularity < min_rectangularity:
+                continue
+
+            (_, _), (bw, bh), _ = rect
+            if bw <= 0 or bh <= 0:
+                continue
+            aspect = max(bw, bh) / min(bw, bh)
+            if abs(aspect - CARD_ASPECT_RATIO) / CARD_ASPECT_RATIO > aspect_tolerance:
+                continue
+
             quads.append(box.reshape(4, 1, 2))
 
         return quads
 
+    def dedup_quads(quads, center_threshold=50):
+        """Remove near-duplicate boxes, keeping the largest when centers overlap.
+
+        Two boxes are considered duplicates if their centers are within
+        center_threshold pixels of each other.
+        """
+        if len(quads) <= 1:
+            return quads
+
+        # Sort by area descending so largest comes first
+        quads_with_area = [(q, cv2.contourArea(q)) for q in quads]
+        quads_with_area.sort(key=lambda x: x[1], reverse=True)
+
+        kept = []
+        for quad, area in quads_with_area:
+            center = quad.reshape(4, 2).mean(axis=0)
+            is_dup = False
+            for kept_quad in kept:
+                kept_center = kept_quad.reshape(4, 2).mean(axis=0)
+                dist = np.linalg.norm(center - kept_center)
+                if dist < center_threshold:
+                    is_dup = True
+                    break
+            if not is_dup:
+                kept.append(quad)
+
+        return kept
+
+    def score_best(quads):
+        """Return the best score among quads."""
+        best = 0.0
+        for q in quads:
+            corners = q.reshape(4, 2)
+            score, _ = score_card_candidate(
+                q, corners, image_area, aspect_ratio_tolerance
+            )
+            best = max(best, score)
+        return best
+
+    # --- Waterfall: try strategies in order, stop on first success ---
+
     # Strategy 1: Canny edge detection with various thresholds
+    canny_candidates = []
     canny_configs = [(20, 60), (30, 100), (50, 150), (75, 200), (100, 250)]
-    saved_canny_indices = [0, 2, 4]  # Save representative samples
+    saved_canny_indices = [0, 2, 4]
 
     for idx, (canny_low, canny_high) in enumerate(canny_configs):
         edges = cv2.Canny(filtered, canny_low, canny_high)
 
-        # Save representative edge images
         if idx in saved_canny_indices and observer:
             observer.save_stage(f"04_canny_{canny_low}_{canny_high}", edges)
 
-        # Morphological closing to connect edges
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         edges_morphed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
-        # Save morphology result for best threshold
         if idx == 2 and observer:
             observer.save_stage("07_canny_morphology", edges_morphed)
 
-        # Find all contours (not just external)
         contours, _ = cv2.findContours(edges_morphed, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        quads = extract_quads(contours)
-        candidates.extend(quads)
-        canny_candidates.extend(quads)
+        canny_candidates.extend(extract_quads(contours))
 
-    # Save Canny contours overlay
+    canny_candidates = dedup_quads(canny_candidates)
+
     if observer and canny_candidates:
         observer.draw_and_save("08_canny_contours", image,
                              draw_contours_overlay, canny_candidates, "Canny Edge Detection", StrategyColor.CANNY)
 
+    if canny_candidates and score_best(canny_candidates) >= min_score:
+        return canny_candidates
+
     # Strategy 2: Adaptive thresholding (for varying lighting)
+    adaptive_candidates = []
     adaptive_configs = [(11, 2), (21, 5), (31, 10), (51, 10)]
-    saved_adaptive = [0, 2]  # Save representative samples
+    saved_adaptive = [0, 2]
 
     for idx, (block_size, C) in enumerate(adaptive_configs):
         thresh = cv2.adaptiveThreshold(
@@ -268,26 +330,27 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
             cv2.THRESH_BINARY, block_size, C
         )
 
-        # Save representative thresholded images
         if idx in saved_adaptive and observer:
             if idx == 0:
                 observer.save_stage("09_adaptive_11_2", thresh)
             elif idx == 2:
                 observer.save_stage("10_adaptive_31_10", thresh)
 
-        # Invert if needed
         for img in [thresh, 255 - thresh]:
             contours, _ = cv2.findContours(img, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-            quads = extract_quads(contours)
-            candidates.extend(quads)
-            adaptive_candidates.extend(quads)
+            adaptive_candidates.extend(extract_quads(contours))
 
-    # Save adaptive contours overlay
+    adaptive_candidates = dedup_quads(adaptive_candidates)
+
     if observer and adaptive_candidates:
         observer.draw_and_save("11_adaptive_contours", image,
                              draw_contours_overlay, adaptive_candidates, "Adaptive Thresholding", StrategyColor.ADAPTIVE)
 
+    if adaptive_candidates and score_best(adaptive_candidates) >= min_score:
+        return adaptive_candidates
+
     # Strategy 3: Otsu's thresholding
+    otsu_candidates = []
     _, otsu = cv2.threshold(filtered, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     if observer:
         observer.save_stage("12_otsu_binary", otsu)
@@ -300,28 +363,28 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         img_morphed = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
         contours, _ = cv2.findContours(img_morphed, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        quads = extract_quads(contours)
-        candidates.extend(quads)
-        otsu_candidates.extend(quads)
+        otsu_candidates.extend(extract_quads(contours))
 
-    # Save Otsu contours overlay
+    otsu_candidates = dedup_quads(otsu_candidates)
+
     if observer and otsu_candidates:
         observer.draw_and_save("14_otsu_contours", image,
                              draw_contours_overlay, otsu_candidates, "Otsu Thresholding", StrategyColor.OTSU)
 
+    if otsu_candidates and score_best(otsu_candidates) >= min_score:
+        return otsu_candidates
+
     # Strategy 4: Color-based segmentation (gray card on light background)
-    # Look for regions that are darker than the background
+    color_candidates = []
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    sat = hsv[:, :, 1]  # Saturation channel
+    sat = hsv[:, :, 1]
     if observer:
         observer.save_stage("15_hsv_saturation", sat)
 
-    # Low saturation = gray colors (like metallic card)
     _, low_sat_mask = cv2.threshold(sat, 30, 255, cv2.THRESH_BINARY_INV)
     if observer:
         observer.save_stage("16_low_sat_mask", low_sat_mask)
 
-    # Combine with value channel to find gray regions
     val = hsv[:, :, 2]
     gray_mask = cv2.bitwise_and(low_sat_mask, cv2.inRange(val, 80, 200))
 
@@ -332,21 +395,21 @@ def find_card_contours(image: np.ndarray, debug_dir: Optional[str] = None) -> Li
         observer.save_stage("17_gray_mask", gray_mask)
 
     contours, _ = cv2.findContours(gray_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    quads = extract_quads(contours, epsilon_factor=0.03)
-    candidates.extend(quads)
-    color_candidates.extend(quads)
+    color_candidates = dedup_quads(extract_quads(contours, epsilon_factor=0.03))
 
-    # Save color-based contours overlay
     if observer and color_candidates:
         observer.draw_and_save("18_color_contours", image,
                              draw_contours_overlay, color_candidates, "Color-Based Detection", StrategyColor.COLOR_BASED)
 
-    # Save all candidates overlay
-    if observer and candidates:
-        observer.draw_and_save("19_all_candidates", image,
-                             draw_contours_overlay, candidates, "All Candidates", StrategyColor.ALL_CANDIDATES)
+    if color_candidates and score_best(color_candidates) >= min_score:
+        return color_candidates
 
-    return candidates
+    # No strategy succeeded — return all collected candidates as last resort
+    all_candidates = canny_candidates + adaptive_candidates + otsu_candidates + color_candidates
+    if observer and all_candidates:
+        observer.draw_and_save("19_all_candidates", image,
+                             draw_contours_overlay, all_candidates, "All Candidates (fallback)", StrategyColor.ALL_CANDIDATES)
+    return all_candidates
 
 
 def detect_credit_card(
@@ -380,8 +443,12 @@ def detect_credit_card(
     h, w = image.shape[:2]
     image_area = h * w
 
-    # Find candidate contours
-    candidates = find_card_contours(image, debug_dir=debug_dir)
+    # Find candidate contours (waterfall: stops after first successful strategy)
+    candidates = find_card_contours(
+        image, image_area=image_area,
+        aspect_ratio_tolerance=aspect_ratio_tolerance,
+        debug_dir=debug_dir,
+    )
 
     if not candidates:
         if observer:
