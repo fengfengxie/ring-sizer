@@ -234,9 +234,9 @@ def extract_ring_zone_roi(
     rotate_align: bool = False
 ) -> Dict[str, Any]:
     """
-    Extract square ROI around ring zone.
+    Extract ROI around ring zone.
 
-    The ROI is a square with side length = zone length (|DIP - PIP|),
+    The ROI is sized from the zone length (|DIP - PIP|): 1.5x wide, 1.0x tall,
     centered on the ring zone center. This scales naturally with camera
     distance since it's derived from anatomical landmarks.
 
@@ -260,16 +260,19 @@ def extract_ring_zone_roi(
     """
     h, w = image.shape[:2]
 
-    # Square ROI: side length = zone length (|DIP - PIP|), centered on zone center
+    # ROI centered on ring zone center, sized from |DIP - PIP| distance:
+    #   height = 1.0x zone length (along finger axis)
+    #   width  = 1.5x zone length (perpendicular, wider to capture full finger edges)
     zone_length = zone_data["length"]
     center = zone_data["center_point"]
     direction = axis_data["direction"]
-    half_side = zone_length / 2.0
+    half_height = zone_length * 0.25 # 0.5x / 2
+    half_width = zone_length * 0.75  # 1.5x / 2
 
-    x_min = int(np.clip(center[0] - half_side, 0, w - 1))
-    x_max = int(np.clip(center[0] + half_side, 0, w - 1))
-    y_min = int(np.clip(center[1] - half_side, 0, h - 1))
-    y_max = int(np.clip(center[1] + half_side, 0, h - 1))
+    x_min = int(np.clip(center[0] - half_width, 0, w - 1))
+    x_max = int(np.clip(center[0] + half_width, 0, w - 1))
+    y_min = int(np.clip(center[1] - half_height, 0, h - 1))
+    y_max = int(np.clip(center[1] + half_height, 0, h - 1))
 
     roi_width = x_max - x_min
     roi_height = y_max - y_min
