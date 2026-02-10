@@ -34,7 +34,6 @@ fi
 # Default values
 INPUT_IMAGE=""
 OUTPUT_JSON="output/test_result.json"
-DEBUG_OUTPUT="output/test_debug.png"
 ENABLE_DEBUG=true
 SKIP_CARD=false
 
@@ -106,7 +105,7 @@ rm -rf output/*_debug/*
 CMD="$PYTHON measure_finger.py --input $INPUT_IMAGE --output $OUTPUT_JSON"
 
 if [ "$ENABLE_DEBUG" = true ]; then
-    CMD="$CMD --debug $DEBUG_OUTPUT"
+    CMD="$CMD --debug"
 fi
 
 if [ "$SKIP_CARD" = true ]; then
@@ -119,8 +118,9 @@ echo -e "${GREEN}Ring Sizer Quick Test${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${BLUE}Input:${NC}  $INPUT_IMAGE"
 echo -e "${BLUE}Output:${NC} $OUTPUT_JSON"
+RESULT_PNG="${OUTPUT_JSON%.json}.png"
 if [ "$ENABLE_DEBUG" = true ]; then
-    echo -e "${BLUE}Debug:${NC}  $DEBUG_OUTPUT"
+    echo -e "${BLUE}Debug:${NC}  enabled"
 fi
 if [ "$SKIP_CARD" = true ]; then
     echo -e "${YELLOW}Mode:${NC}   TESTING (card detection skipped)"
@@ -143,15 +143,9 @@ if [ -f "$OUTPUT_JSON" ]; then
     echo ""
 fi
 
-if [ "$ENABLE_DEBUG" = true ] && [ -f "$DEBUG_OUTPUT" ]; then
-    echo -e "${BLUE}Debug visualization saved to:${NC} $DEBUG_OUTPUT"
+if [ -f "$RESULT_PNG" ]; then
+    echo -e "${BLUE}Result image saved to:${NC} $RESULT_PNG"
     echo ""
-
-    # Try to open the debug image (macOS)
-    #if command -v open &> /dev/null; then
-    #    echo -e "${YELLOW}Opening debug visualization...${NC}"
-    #    open "$DEBUG_OUTPUT"
-    #fi
 fi
 
 echo -e "${GREEN}========================================${NC}"

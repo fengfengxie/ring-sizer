@@ -1418,3 +1418,16 @@ Use `cv2.minAreaRect()` on the original contour instead of `approxPolyDP` for co
   - Import changed from `src.visualization` to `src.debug_observer`
 
 ---
+
+## Bugfix: test.sh incompatible with new --debug flag (2026-02-10) ✅
+
+### Problem
+`script/test.sh` still passed old-style `--debug $DEBUG_OUTPUT` (path argument) but `--debug` was changed to a boolean flag. Result PNG is now always auto-generated alongside JSON output.
+
+### Changes
+- **`script/test.sh`**:
+  - Removed `DEBUG_OUTPUT` variable (no longer needed)
+  - Changed `--debug $DEBUG_OUTPUT` → `--debug` (boolean flag, no path)
+  - Updated result PNG check to use derived path (`${OUTPUT_JSON%.json}.png`)
+
+---
