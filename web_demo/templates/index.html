@@ -13,34 +13,34 @@
   <header class="hero">
     <div class="hero-copy">
       <p class="hero-kicker">Ring Size CV · Web Demo</p>
-      <h1>上传一张照片，快速识别指环尺寸</h1>
+      <h1>Upload a photo to quickly measure ring size</h1>
       <p class="hero-sub">
-        本地模型执行，不上传云端。识别结果会返回 JSON 与可视化叠图。
+        Runs locally with no cloud upload. Results include JSON output and a visual overlay.
       </p>
     </div>
     <div class="hero-card">
       <form id="measureForm">
         <label class="file-drop" for="imageInput">
           <input id="imageInput" name="image" type="file" accept="image/*" />
-          <span class="file-title">点击或拖拽上传照片</span>
-          <span class="file-hint">支持 JPG / PNG · 建议 1080p 以上</span>
+          <span class="file-title">Click or drag to upload a photo</span>
+          <span class="file-hint">JPG / PNG supported · 1080p or higher recommended</span>
         </label>
 
         <div class="controls">
           <label>
-            <span>指头选择</span>
+            <span>Finger Selection</span>
             <select name="finger_index">
-              <option value="index" selected>食指（默认）</option>
-              <option value="middle">中指</option>
-              <option value="ring">无名指</option>
-              <option value="pinky">小拇指</option>
-              <option value="auto">自动</option>
+              <option value="index" selected>Index (Default)</option>
+              <option value="middle">Middle</option>
+              <option value="ring">Ring</option>
+              <option value="pinky">Pinky</option>
+              <option value="auto">Auto</option>
             </select>
           </label>
           <label>
-            <span>边缘算法</span>
+            <span>Edge Method</span>
             <select name="edge_method">
-              <option value="auto" selected>自动</option>
+              <option value="auto" selected>Auto</option>
               <option value="sobel">Sobel</option>
               <option value="contour">Contour</option>
               <option value="compare">Compare</option>
@@ -48,8 +48,8 @@
           </label>
         </div>
 
-        <button class="primary" type="submit">开始识别</button>
-        <p class="status" id="statusText">等待上传图片…</p>
+        <button class="primary" type="submit">Start Measurement</button>
+        <p class="status" id="statusText">Waiting for image…</p>
       </form>
     </div>
   </header>
@@ -57,18 +57,18 @@
   <main class="content">
     <section class="preview">
       <div class="panel">
-        <h2>输入照片</h2>
+        <h2>Input Photo</h2>
         <div class="image-frame" id="inputFrame">
           <img id="inputPreview" alt="" />
-          <p class="placeholder">暂无图片</p>
+          <p class="placeholder">No image yet</p>
         </div>
       </div>
 
       <div class="panel">
-        <h2>识别结果图</h2>
+        <h2>Result Overlay</h2>
         <div class="image-frame" id="debugFrame">
           <img id="debugPreview" alt="" />
-          <p class="placeholder">等待生成</p>
+          <p class="placeholder">Waiting for result</p>
         </div>
       </div>
     </section>
@@ -76,19 +76,19 @@
     <section class="result">
       <div class="panel">
         <div class="panel-head">
-          <h2>JSON 结果</h2>
-          <a id="jsonLink" class="ghost" href="#" target="_blank" rel="noreferrer">打开原始 JSON</a>
+          <h2>JSON Output</h2>
+          <a id="jsonLink" class="ghost" href="#" target="_blank" rel="noreferrer">Open raw JSON</a>
         </div>
         <pre id="jsonOutput">{}</pre>
       </div>
 
       <div class="panel tips">
-        <h2>拍摄建议</h2>
+        <h2>Photo Tips</h2>
         <ul>
-          <li>手指与银行卡同一平面，避免倾斜</li>
-          <li>光线均匀，避免强烈阴影</li>
-          <li>指尖伸直、戒指佩戴区露出</li>
-          <li>拍摄分辨率越高，精度越好</li>
+          <li>Keep the finger and card on the same plane; avoid tilt.</li>
+          <li>Use even lighting and avoid harsh shadows.</li>
+          <li>Extend the finger and keep the ring-wearing zone visible.</li>
+          <li>Higher resolution improves accuracy.</li>
         </ul>
       </div>
     </section>

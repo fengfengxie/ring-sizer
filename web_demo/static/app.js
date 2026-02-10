@@ -22,12 +22,12 @@ const showImage = (imgEl, frameEl, url) => {
 imageInput.addEventListener("change", () => {
   const file = imageInput.files[0];
   if (!file) {
-    setStatus("等待上传图片…");
+    setStatus("Waiting for image…");
     return;
   }
   const url = URL.createObjectURL(file);
   showImage(inputPreview, inputFrame, url);
-  setStatus("图片已就绪，点击开始识别");
+  setStatus("Image ready. Click to start measurement.");
 });
 
 form.addEventListener("submit", async (event) => {
@@ -35,11 +35,11 @@ form.addEventListener("submit", async (event) => {
 
   const file = imageInput.files[0];
   if (!file) {
-    setStatus("请先选择图片");
+    setStatus("Please select an image first.");
     return;
   }
 
-  setStatus("识别中，请稍候…");
+  setStatus("Measuring… Please wait.");
   jsonOutput.textContent = "{" + "\n  \"status\": \"processing\"\n}";
 
   const formData = new FormData(form);
@@ -53,7 +53,7 @@ form.addEventListener("submit", async (event) => {
 
     if (!response.ok) {
       const error = await response.json();
-      setStatus(error.error || "识别失败");
+      setStatus(error.error || "Measurement failed");
       return;
     }
 
@@ -66,11 +66,11 @@ form.addEventListener("submit", async (event) => {
     showImage(debugPreview, debugFrame, data.result_image_url);
 
     if (data.success) {
-      setStatus("识别完成，结果已更新");
+      setStatus("Measurement complete. Results updated.");
     } else {
-      setStatus("识别失败，请查看 fail_reason");
+      setStatus("Measurement failed. Check fail_reason.");
     }
   } catch (error) {
-    setStatus("网络错误，请重试");
+    setStatus("Network error. Please retry.");
   }
 });
