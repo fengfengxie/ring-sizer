@@ -1289,20 +1289,17 @@ def draw_comprehensive_edge_overlay(
     cv2.line(vis, tuple(axis_start.astype(int)), tuple(axis_end.astype(int)), 
              Color.YELLOW, 2, cv2.LINE_AA)
     
-    # 2. Draw ring zone bounds
+    # 2. Draw ring zone bounds as two lines perpendicular to axis at zone start/end
     zone_start = zone_data["start_point"]
     zone_end = zone_data["end_point"]
     perp_direction = np.array([-axis_direction[1], axis_direction[0]])
-    zone_width = 400  # Visual width for zone band
-    
-    zone_corners = [
-        zone_start + perp_direction * zone_width,
-        zone_start - perp_direction * zone_width,
-        zone_end - perp_direction * zone_width,
-        zone_end + perp_direction * zone_width,
-    ]
-    zone_pts = np.array([c.astype(int) for c in zone_corners])
-    cv2.polylines(vis, [zone_pts], True, Color.ORANGE, 2, cv2.LINE_AA)
+    # Use ROI half-width so the zone lines span the ROI
+    roi_half_width = (x_max - x_min) / 2.0
+
+    for zone_pt in [zone_start, zone_end]:
+        p1 = (zone_pt + perp_direction * roi_half_width).astype(int)
+        p2 = (zone_pt - perp_direction * roi_half_width).astype(int)
+        cv2.line(vis, tuple(p1), tuple(p2), Color.ORANGE, 2, cv2.LINE_AA)
     
     # 3. Draw ROI boundary
     cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), Color.CYAN, 2)
@@ -1352,7 +1349,7 @@ def draw_comprehensive_edge_overlay(
         "",
         "Legend:",
         "  Yellow line = Finger axis",
-        "  Orange box = Ring zone",
+        "  Orange lines = Ring zone",
         "  Cyan box = ROI",
         "  Blue dots = Left edges",
         "  Magenta dots = Right edges",

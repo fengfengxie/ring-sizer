@@ -21,9 +21,6 @@ import logging
 from typing import Dict, Any, Optional, Tuple, List
 
 from src.edge_refinement_constants import (
-    # ROI Extraction
-    ROI_PADDING_PX,
-    FINGER_WIDTH_RATIO,
     # Sobel Filter
     DEFAULT_KERNEL_SIZE,
     VALID_KERNEL_SIZES,
@@ -234,24 +231,26 @@ def extract_ring_zone_roi(
     axis_data: Dict[str, Any],
     zone_data: Dict[str, Any],
     finger_mask: Optional[np.ndarray] = None,
-    padding: int = ROI_PADDING_PX,
     rotate_align: bool = False
 ) -> Dict[str, Any]:
     """
-    Extract rectangular ROI around ring zone.
+    Extract square ROI around ring zone.
+
+    The ROI is a square with side length = zone length (|DIP - PIP|),
+    centered on the ring zone center. This scales naturally with camera
+    distance since it's derived from anatomical landmarks.
 
     Args:
         image: Input BGR image
         axis_data: Output from estimate_finger_axis()
         zone_data: Output from localize_ring_zone()
         finger_mask: Optional finger mask for constrained detection
-        padding: Extra pixels around zone for gradient context
         rotate_align: If True, rotate ROI so finger axis is vertical
 
     Returns:
         Dictionary containing:
         - roi_image: Extracted ROI (grayscale)
-        - roi_mask: Extracted finger mask ROI (if finger_mask provided)
+        - roi_mask: Full ROI mask (all 255)
         - roi_bounds: (x_min, y_min, x_max, y_max) in original image
         - transform_matrix: 3x3 matrix to map ROI coords -> original coords
         - inverse_transform: 3x3 matrix to map original -> ROI coords
@@ -261,56 +260,16 @@ def extract_ring_zone_roi(
     """
     h, w = image.shape[:2]
 
-    # Extract zone information
-    start_point = zone_data["start_point"]
-    end_point = zone_data["end_point"]
-    direction = axis_data["direction"]
-
-    # Perpendicular direction
-    perp_direction = np.array([-direction[1], direction[0]], dtype=np.float32)
-
-    # Calculate zone length and estimated width
+    # Square ROI: side length = zone length (|DIP - PIP|), centered on zone center
     zone_length = zone_data["length"]
-    # Estimate finger width from axis length (rough approximation)
-    # Typical finger aspect ratio is ~3:1 to 5:1 (length:width)
-    # Use conservative estimate to ensure we capture full finger width
-    estimated_width = axis_data["length"] / FINGER_WIDTH_RATIO
+    center = zone_data["center_point"]
+    direction = axis_data["direction"]
+    half_side = zone_length / 2.0
 
-    # Define ROI bounds
-    # ROI extends from start to end along axis, ±(width/2 + padding) perpendicular
-    half_width = (estimated_width / 2.0) + padding
-
-    # Calculate corner points of ROI
-    # Start from zone start, extend perpendicular in both directions
-    roi_corners = []
-    for axis_pt in [start_point, end_point]:
-        # Extend padding along axis direction (for gradient context)
-        for perp_sign in [-1, 1]:
-            corner = axis_pt + perp_direction * (half_width * perp_sign)
-            roi_corners.append(corner)
-
-    # Add axis padding
-    axis_padding = padding
-    start_extended = start_point - direction * axis_padding
-    end_extended = end_point + direction * axis_padding
-
-    # Recalculate corners with axis padding
-    roi_corners = []
-    for axis_pt in [start_extended, end_extended]:
-        for perp_sign in [-1, 1]:
-            corner = axis_pt + perp_direction * (half_width * perp_sign)
-            roi_corners.append(corner)
-
-    roi_corners = np.array(roi_corners, dtype=np.float32)
-
-    # Calculate bounding box
-    x_coords = roi_corners[:, 0]
-    y_coords = roi_corners[:, 1]
-
-    x_min = int(np.clip(np.min(x_coords), 0, w - 1))
-    x_max = int(np.clip(np.max(x_coords), 0, w - 1))
-    y_min = int(np.clip(np.min(y_coords), 0, h - 1))
-    y_max = int(np.clip(np.max(y_coords), 0, h - 1))
+    x_min = int(np.clip(center[0] - half_side, 0, w - 1))
+    x_max = int(np.clip(center[0] + half_side, 0, w - 1))
+    y_min = int(np.clip(center[1] - half_side, 0, h - 1))
+    y_max = int(np.clip(center[1] + half_side, 0, h - 1))
 
     roi_width = x_max - x_min
     roi_height = y_max - y_min
@@ -324,13 +283,8 @@ def extract_ring_zone_roi(
     # Convert to grayscale for edge detection
     roi_gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
 
-    # Use middle 50% height of ROI as the search mask (25%-75% of height).
-    # This constrains edge detection to the ring zone while avoiding noisy top/bottom edges.
-    # Width remains full ROI width.
-    roi_mask = np.zeros((roi_height, roi_width), dtype=np.uint8)
-    y_start = int(roi_height * 0.25)
-    y_end = int(roi_height * 0.75)
-    roi_mask[y_start:y_end, :] = 255
+    # Full ROI mask — the square itself is the search constraint
+    roi_mask = np.ones((roi_height, roi_width), dtype=np.uint8) * 255
 
     # Create transform matrix (ROI coords -> original coords)
     # Simple translation for non-rotated case
@@ -369,15 +323,19 @@ def extract_ring_zone_roi(
         inverse_transform = np.linalg.inv(transform)
 
     # Convert axis center point and direction to ROI coordinates
-    axis_center = axis_data.get("center", (start_point + end_point) / 2)
-    axis_center_in_roi = axis_center - np.array([x_min, y_min], dtype=np.float32)
+    axis_center = axis_data.get("center", center)
+    roi_offset = np.array([x_min, y_min], dtype=np.float32)
+    axis_center_in_roi = axis_center - roi_offset
 
     # Direction vector stays the same (it's not affected by translation)
     axis_direction_in_roi = direction.copy()
 
+    zone_start = zone_data["start_point"]
+    zone_end = zone_data["end_point"]
+
     return {
         "roi_image": roi_gray,
-        "roi_mask": roi_mask,  # Finger mask ROI
+        "roi_mask": roi_mask,
         "roi_bgr": roi_bgr,  # Keep BGR for debug visualization
         "roi_bounds": (x_min, y_min, x_max, y_max),
         "transform_matrix": transform,
@@ -385,10 +343,10 @@ def extract_ring_zone_roi(
         "rotation_angle": rotation_angle,
         "roi_width": roi_width,
         "roi_height": roi_height,
-        "zone_start_in_roi": start_point - np.array([x_min, y_min], dtype=np.float32),
-        "zone_end_in_roi": end_point - np.array([x_min, y_min], dtype=np.float32),
-        "axis_center_in_roi": axis_center_in_roi,  # NEW: axis center in ROI coords
-        "axis_direction_in_roi": axis_direction_in_roi,  # NEW: axis direction vector
+        "zone_start_in_roi": zone_start - roi_offset,
+        "zone_end_in_roi": zone_end - roi_offset,
+        "axis_center_in_roi": axis_center_in_roi,
+        "axis_direction_in_roi": axis_direction_in_roi,
     }
 
 
@@ -1085,7 +1043,7 @@ def refine_edges_sobel(
     roi_data = extract_ring_zone_roi(
         image, axis_data, zone_data,
         finger_mask=finger_mask,
-        padding=ROI_PADDING_PX, rotate_align=rotate_align
+        rotate_align=rotate_align
     )
 
     logger.debug(f"ROI size: {roi_data['roi_width']}x{roi_data['roi_height']}px")
