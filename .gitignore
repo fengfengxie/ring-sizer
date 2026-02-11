@@ -26,7 +26,7 @@ web_demo/uploads/
 web_demo/results/
 
 # Downloaded models (auto-downloaded on first run)
-model/*.task
+.model/*.task
 
 # Test artifacts
 input/

@@ -52,7 +52,7 @@ WRIST_LANDMARK = 0
 PALM_LANDMARKS = [0, 1, 5, 9, 13, 17]
 
 # Model path
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "hand_landmarker.task")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", ".model", "hand_landmarker.task")
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 
 # Initialize MediaPipe Hands (lazy loading)
