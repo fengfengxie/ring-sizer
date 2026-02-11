@@ -90,7 +90,9 @@ def _find_edges_from_axis(
     threshold: float,
     min_width_px: Optional[float],
     max_width_px: Optional[float],
-    row_mask: Optional[np.ndarray] = None
+    row_mask: Optional[np.ndarray] = None,
+    row_gradient_left_to_right: Optional[np.ndarray] = None,
+    row_gradient_right_to_left: Optional[np.ndarray] = None,
 ) -> Optional[Tuple[float, float, float, float]]:
     """
     Find left and right edges by expanding from axis position.
@@ -114,12 +116,20 @@ def _find_edges_from_axis(
         min_width_px: Minimum valid width in pixels (None to skip)
         max_width_px: Maximum valid width in pixels (None to skip)
         row_mask: Optional mask row (True = finger pixel) for constrained search
+        row_gradient_left_to_right: Optional directional gradient map for right edge search
+        row_gradient_right_to_left: Optional directional gradient map for left edge search
 
     Returns:
         Tuple of (left_x, right_x, left_strength, right_strength) or None if invalid
     """
     if axis_x < 0 or axis_x >= len(row_gradient):
         return None
+
+    # Direction-aware gradient maps (preferred when available):
+    # - left boundary should come from right-to-left transition
+    # - right boundary should come from left-to-right transition
+    left_search_gradient = row_gradient_right_to_left if row_gradient_right_to_left is not None else row_gradient
+    right_search_gradient = row_gradient_left_to_right if row_gradient_left_to_right is not None else row_gradient
 
     # MASK-CONSTRAINED MODE (preferred when available)
     if row_mask is not None and np.any(row_mask):
@@ -142,11 +152,11 @@ def _find_edges_from_axis(
         for x in range(search_start, left_mask_boundary - 1, -1):
             if x < 0 or x >= len(row_gradient):
                 continue
-            if row_gradient[x] > threshold:
+            if left_search_gradient[x] > threshold:
                 # Found a strong edge - update if stronger than previous
-                if row_gradient[x] > left_strength:
+                if left_search_gradient[x] > left_strength:
                     left_edge_x = x
-                    left_strength = row_gradient[x]
+                    left_strength = left_search_gradient[x]
 
         # If no edge found with full threshold, try with relaxed threshold
         if left_edge_x is None:
@@ -154,10 +164,10 @@ def _find_edges_from_axis(
             for x in range(search_start, left_mask_boundary - 1, -1):
                 if x < 0 or x >= len(row_gradient):
                     continue
-                if row_gradient[x] > relaxed_threshold:
-                    if row_gradient[x] > left_strength:
+                if left_search_gradient[x] > relaxed_threshold:
+                    if left_search_gradient[x] > left_strength:
                         left_edge_x = x
-                        left_strength = row_gradient[x]
+                        left_strength = left_search_gradient[x]
 
         # Search RIGHT from axis, stopping at mask boundary
         right_edge_x = None
@@ -168,11 +178,11 @@ def _find_edges_from_axis(
         for x in range(search_start, right_mask_boundary + 1):
             if x < 0 or x >= len(row_gradient):
                 continue
-            if row_gradient[x] > threshold:
+            if right_search_gradient[x] > threshold:
                 # Found a strong edge - update if stronger than previous
-                if row_gradient[x] > right_strength:
+                if right_search_gradient[x] > right_strength:
                     right_edge_x = x
-                    right_strength = row_gradient[x]
+                    right_strength = right_search_gradient[x]
 
         # If no edge found with full threshold, try with relaxed threshold
         if right_edge_x is None:
@@ -180,10 +190,10 @@ def _find_edges_from_axis(
             for x in range(search_start, right_mask_boundary + 1):
                 if x < 0 or x >= len(row_gradient):
                     continue
-                if row_gradient[x] > relaxed_threshold:
-                    if row_gradient[x] > right_strength:
+                if right_search_gradient[x] > relaxed_threshold:
+                    if right_search_gradient[x] > right_strength:
                         right_edge_x = x
-                        right_strength = row_gradient[x]
+                        right_strength = right_search_gradient[x]
 
         if left_edge_x is None or right_edge_x is None:
             return None  # No valid edges found
@@ -194,20 +204,20 @@ def _find_edges_from_axis(
         left_edge_x = None
         left_strength = 0
         for x in range(int(axis_x), -1, -1):
-            if row_gradient[x] > threshold:
+            if left_search_gradient[x] > threshold:
                 # Found a salient edge - this is our left boundary
                 left_edge_x = x
-                left_strength = row_gradient[x]
+                left_strength = left_search_gradient[x]
                 break
 
         # Search RIGHT from axis (go rightward)
         right_edge_x = None
         right_strength = 0
         for x in range(int(axis_x), len(row_gradient)):
-            if row_gradient[x] > threshold:
+            if right_search_gradient[x] > threshold:
                 # Found a salient edge - this is our right boundary
                 right_edge_x = x
-                right_strength = row_gradient[x]
+                right_strength = right_search_gradient[x]
                 break
 
         if left_edge_x is None or right_edge_x is None:
@@ -376,6 +386,8 @@ def apply_sobel_filters(
         Dictionary containing:
         - gradient_x: Horizontal gradient (Sobel X)
         - gradient_y: Vertical gradient (Sobel Y)
+        - gradient_left_to_right: Positive X-gradient map (right-half gated in horizontal mode)
+        - gradient_right_to_left: Negative X-gradient map (left-half gated in horizontal mode)
         - gradient_magnitude: Combined gradient magnitude
         - gradient_direction: Edge orientation (radians)
         - kernel_size: Kernel size used
@@ -410,8 +422,23 @@ def apply_sobel_filters(
     grad_x = cv2.Sobel(roi_image, cv2.CV_64F, 1, 0, ksize=kernel_size)
     grad_y = cv2.Sobel(roi_image, cv2.CV_64F, 0, 1, ksize=kernel_size)
 
-    # Calculate gradient magnitude
-    gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    # Directional Sobel responses along X:
+    # - left_to_right: rising intensity while moving left -> right
+    # - right_to_left: falling intensity while moving left -> right
+    gradient_left_to_right = np.maximum(grad_x, 0.0)
+    gradient_right_to_left = np.maximum(-grad_x, 0.0)
+
+    # Spatial gating to reduce nearby non-target finger interference:
+    # - left_to_right only on ROI right half
+    # - right_to_left only on ROI left half
+    roi_split_x = w // 2
+    if filter_orientation == "horizontal":
+        gradient_left_to_right[:, :roi_split_x] = 0.0
+        gradient_right_to_left[:, roi_split_x:] = 0.0
+        gradient_magnitude = np.sqrt(gradient_left_to_right**2 + gradient_right_to_left**2)
+    else:
+        # Vertical mode fallback keeps the original behavior.
+        gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
 
     # Calculate gradient direction (angle)
     gradient_direction = np.arctan2(grad_y, grad_x)
@@ -420,17 +447,24 @@ def apply_sobel_filters(
     grad_x_normalized = np.clip(np.abs(grad_x), 0, 255).astype(np.uint8)
     grad_y_normalized = np.clip(np.abs(grad_y), 0, 255).astype(np.uint8)
     grad_mag_normalized = np.clip(gradient_magnitude, 0, 255).astype(np.uint8)
+    grad_l2r_normalized = np.clip(gradient_left_to_right, 0, 255).astype(np.uint8)
+    grad_r2l_normalized = np.clip(gradient_right_to_left, 0, 255).astype(np.uint8)
 
     return {
         "gradient_x": grad_x,
         "gradient_y": grad_y,
+        "gradient_left_to_right": gradient_left_to_right,
+        "gradient_right_to_left": gradient_right_to_left,
         "gradient_magnitude": gradient_magnitude,
         "gradient_direction": gradient_direction,
         "gradient_x_normalized": grad_x_normalized,
         "gradient_y_normalized": grad_y_normalized,
+        "gradient_left_to_right_normalized": grad_l2r_normalized,
+        "gradient_right_to_left_normalized": grad_r2l_normalized,
         "gradient_mag_normalized": grad_mag_normalized,
         "kernel_size": kernel_size,
         "filter_orientation": filter_orientation,
+        "roi_split_x": roi_split_x,
     }
 
 
@@ -472,6 +506,8 @@ def detect_edges_per_row(
         - mode_used: "mask_constrained" or "axis_expansion"
     """
     gradient_magnitude = gradient_data["gradient_magnitude"]
+    gradient_left_to_right = gradient_data.get("gradient_left_to_right")
+    gradient_right_to_left = gradient_data.get("gradient_right_to_left")
     filter_orientation = gradient_data["filter_orientation"]
 
     h, w = gradient_magnitude.shape
@@ -522,13 +558,17 @@ def detect_edges_per_row(
 
             # Get gradient for this row
             row_gradient = gradient_magnitude[row, :]
+            row_gradient_l2r = gradient_left_to_right[row, :] if gradient_left_to_right is not None else None
+            row_gradient_r2l = gradient_right_to_left[row, :] if gradient_right_to_left is not None else None
 
             # Get mask for this row (if available)
             row_mask = roi_mask[row, :] if roi_mask is not None else None
 
             # Find edges using mask-constrained or axis-expansion method
             result = _find_edges_from_axis(row_gradient, row, axis_x, threshold,
-                                          min_width_px, max_width_px, row_mask)
+                                          min_width_px, max_width_px, row_mask,
+                                          row_gradient_left_to_right=row_gradient_l2r,
+                                          row_gradient_right_to_left=row_gradient_r2l)
 
             if result is None:
                 continue  # No valid edges found
@@ -1067,11 +1107,11 @@ def refine_edges_sobel(
     if debug_dir:
         # Stage B: Sobel Filtering
         # B.1: Left-to-right gradient
-        grad_left = draw_gradient_visualization(gradient_data["gradient_x"], cv2.COLORMAP_JET)
+        grad_left = draw_gradient_visualization(gradient_data["gradient_left_to_right"], cv2.COLORMAP_JET)
         observer.save_stage("04_sobel_left_to_right", grad_left)
 
         # B.2: Right-to-left gradient
-        grad_right = draw_gradient_visualization(-gradient_data["gradient_x"], cv2.COLORMAP_JET)
+        grad_right = draw_gradient_visualization(gradient_data["gradient_right_to_left"], cv2.COLORMAP_JET)
         observer.save_stage("05_sobel_right_to_left", grad_right)
 
         # B.3: Gradient magnitude

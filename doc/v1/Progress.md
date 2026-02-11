@@ -87,6 +87,18 @@
 - Corrected `card_detected` consistency in skip-card failure paths.
 - Removed unused Sobel `finger_mask` parameters and cleaned related docs/comments.
 
+### 2026-02-11 - Directional half-ROI Sobel gating
+- Added directional Sobel maps in `src/edge_refinement.py`:
+  - `left_to_right` responses retained only on ROI right half
+  - `right_to_left` responses retained only on ROI left half
+- Updated edge selection to use direction-specific gradients per side:
+  - left edge search uses right-to-left map
+  - right edge search uses left-to-right map
+- Updated stage debug outputs:
+  - `04_sobel_left_to_right` now visualizes half-gated `left_to_right`
+  - `05_sobel_right_to_left` now visualizes half-gated `right_to_left`
+- Goal: reduce nearby non-target finger edge contamination in Sobel mode.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`
@@ -103,4 +115,3 @@
   - compare `contour` vs `sobel` vs `auto`
   - summarize MAE, variance, and fallback rate
   - publish `doc/v1/validation-summary.md`.
-
