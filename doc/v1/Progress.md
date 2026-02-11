@@ -1431,3 +1431,44 @@ Use `cv2.minAreaRect()` on the original contour instead of `approxPolyDP` for co
   - Updated result PNG check to use derived path (`${OUTPUT_JSON%.json}.png`)
 
 ---
+
+## Bugfix: Edge-method consistency and Sobel parameter wiring (2026-02-11) ✅
+
+### Problem
+Recent refactors introduced several consistency regressions:
+- `--no-subpixel` flag was parsed but ignored (subpixel always enabled internally)
+- Compare mode confidence used contour weighting even when Sobel result was output
+- Result PNG could render Sobel overlay in `auto` fallback mode (numeric result from contour)
+- Failure outputs in `--skip-card-detection` mode sometimes incorrectly reported `card_detected=true`
+- ROI sizing comments drifted from intentional implementation and became misleading
+
+### Solution
+- **Wired CLI subpixel flag end-to-end**
+  - Added `use_subpixel` parameter to `refine_edges_sobel()`
+  - Passed `use_subpixel=not args.no_subpixel` from `measure_finger.py`
+  - Removed hardcoded `use_subpixel=True` at width measurement step
+
+- **Aligned confidence method with actual output method**
+  - Compare mode now uses Sobel confidence weighting (`edge_method="sobel"`) when Sobel output is used
+
+- **Aligned visualization method with selected output method**
+  - Sobel overlay now renders only when `edge_method_used` is `"sobel"` or `"compare"`
+  - Prevents visual mismatch when `auto` chooses contour fallback
+
+- **Fixed quality flag consistency in testing mode**
+  - Replaced hardcoded `card_detected=True` in failure returns with runtime `card_detected` variable
+
+- **Cleaned dead/useless Sobel API surface**
+  - Removed unused `finger_mask` parameter from `extract_ring_zone_roi()` and `refine_edges_sobel()`
+  - Updated ROI comments/docstring to match intentional sizing (`1.5x` width, `0.5x` height)
+
+### Files Modified
+- `measure_finger.py`
+- `src/edge_refinement.py`
+
+### Validation Notes
+- Ran pipeline invocation to exercise updated path:
+  - `.venv/bin/python measure_finger.py --input input/test_sample2.jpg --output output/review_fix_test.json --edge-method auto --no-subpixel`
+- Result: code path reached runtime, but sandbox environment failed in MediaPipe initialization (`NSOpenGLPixelFormat`/GPU service), so full end-to-end verification could not complete in this environment.
+
+---

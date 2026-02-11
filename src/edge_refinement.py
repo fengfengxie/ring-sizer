@@ -230,13 +230,12 @@ def extract_ring_zone_roi(
     image: np.ndarray,
     axis_data: Dict[str, Any],
     zone_data: Dict[str, Any],
-    finger_mask: Optional[np.ndarray] = None,
     rotate_align: bool = False
 ) -> Dict[str, Any]:
     """
     Extract ROI around ring zone.
 
-    The ROI is sized from the zone length (|DIP - PIP|): 1.5x wide, 1.0x tall,
+    The ROI is sized from the zone length (|DIP - PIP|): 1.5x wide, 0.5x tall,
     centered on the ring zone center. This scales naturally with camera
     distance since it's derived from anatomical landmarks.
 
@@ -244,7 +243,6 @@ def extract_ring_zone_roi(
         image: Input BGR image
         axis_data: Output from estimate_finger_axis()
         zone_data: Output from localize_ring_zone()
-        finger_mask: Optional finger mask for constrained detection
         rotate_align: If True, rotate ROI so finger axis is vertical
 
     Returns:
@@ -261,7 +259,7 @@ def extract_ring_zone_roi(
     h, w = image.shape[:2]
 
     # ROI centered on ring zone center, sized from |DIP - PIP| distance:
-    #   height = 1.0x zone length (along finger axis)
+    #   height = 0.5x zone length (along finger axis)
     #   width  = 1.5x zone length (perpendicular, wider to capture full finger edges)
     zone_length = zone_data["length"]
     center = zone_data["center_point"]
@@ -286,7 +284,7 @@ def extract_ring_zone_roi(
     # Convert to grayscale for edge detection
     roi_gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
 
-    # Full ROI mask — the square itself is the search constraint
+    # Full ROI mask — the ROI rectangle itself is the search constraint
     roi_mask = np.ones((roi_height, roi_width), dtype=np.uint8) * 255
 
     # Create transform matrix (ROI coords -> original coords)
@@ -978,11 +976,11 @@ def refine_edges_sobel(
     axis_data: Dict[str, Any],
     zone_data: Dict[str, Any],
     scale_px_per_cm: float,
-    finger_mask: Optional[np.ndarray] = None,
     finger_landmarks: Optional[np.ndarray] = None,
     sobel_threshold: float = DEFAULT_GRADIENT_THRESHOLD,
     kernel_size: int = DEFAULT_KERNEL_SIZE,
     rotate_align: bool = False,
+    use_subpixel: bool = True,
     expected_width_px: Optional[float] = None,
     debug_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -1003,11 +1001,11 @@ def refine_edges_sobel(
         axis_data: Output from estimate_finger_axis()
         zone_data: Output from localize_ring_zone()
         scale_px_per_cm: Pixels per cm from card detection
-        finger_mask: Optional finger mask for constrained detection
         finger_landmarks: Optional 4x2 array of finger landmarks for debug
         sobel_threshold: Minimum gradient magnitude for valid edge
         kernel_size: Sobel kernel size (3, 5, or 7)
         rotate_align: Rotate ROI for vertical finger alignment
+        use_subpixel: Enable sub-pixel edge localization
         expected_width_px: Expected width for validation (optional)
         debug_dir: Directory to save debug visualizations (None to skip)
 
@@ -1045,7 +1043,6 @@ def refine_edges_sobel(
     # Step 1: Extract ROI
     roi_data = extract_ring_zone_roi(
         image, axis_data, zone_data,
-        finger_mask=finger_mask,
         rotate_align=rotate_align
     )
 
@@ -1142,7 +1139,7 @@ def refine_edges_sobel(
     width_data = measure_width_from_edges(
         edge_data, roi_data, scale_px_per_cm,
         gradient_data=gradient_data,
-        use_subpixel=True
+        use_subpixel=use_subpixel
     )
 
     if debug_dir:

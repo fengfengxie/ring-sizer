@@ -338,7 +338,7 @@ def measure_finger(
     if finger_data is None:
         print(f"Could not isolate finger: {finger_index}")
         return create_output(
-            card_detected=True,
+            card_detected=card_detected,
             finger_detected=False,
             scale_px_per_cm=px_per_cm,
             view_angle_ok=view_angle_ok,
@@ -353,7 +353,7 @@ def measure_finger(
     if cleaned_mask is None:
         print("Finger mask too small or invalid")
         return create_output(
-            card_detected=True,
+            card_detected=card_detected,
             finger_detected=False,
             scale_px_per_cm=px_per_cm,
             view_angle_ok=view_angle_ok,
@@ -366,7 +366,7 @@ def measure_finger(
     if contour is None:
         print("Could not extract finger contour")
         return create_output(
-            card_detected=True,
+            card_detected=card_detected,
             finger_detected=False,
             scale_px_per_cm=px_per_cm,
             view_angle_ok=view_angle_ok,
@@ -386,7 +386,7 @@ def measure_finger(
     except Exception as e:
         print(f"Failed to estimate finger axis: {e}")
         return create_output(
-            card_detected=True,
+            card_detected=card_detected,
             finger_detected=True,
             scale_px_per_cm=px_per_cm,
             view_angle_ok=view_angle_ok,
@@ -465,7 +465,7 @@ def measure_finger(
     except Exception as e:
         print(f"Failed to localize ring zone: {e}")
         return create_output(
-            card_detected=True,
+            card_detected=card_detected,
             finger_detected=True,
             scale_px_per_cm=px_per_cm,
             view_angle_ok=view_angle_ok,
@@ -491,7 +491,7 @@ def measure_finger(
     except Exception as e:
         print(f"Failed to measure finger width (contour): {e}")
         return create_output(
-            card_detected=True,
+            card_detected=card_detected,
             finger_detected=True,
             scale_px_per_cm=px_per_cm,
             view_angle_ok=view_angle_ok,
@@ -517,10 +517,10 @@ def measure_finger(
                 axis_data=axis_data,
                 zone_data=zone_data,
                 scale_px_per_cm=px_per_cm,
-                finger_mask=cleaned_mask,
                 finger_landmarks=finger_data.get("landmarks"),
                 sobel_threshold=sobel_threshold,
                 kernel_size=sobel_kernel_size,
+                use_subpixel=use_subpixel,
                 debug_dir=edge_debug_dir,
             )
 
@@ -536,7 +536,7 @@ def measure_finger(
             if edge_method == "sobel":
                 # User explicitly requested Sobel, fail if it doesn't work
                 return create_output(
-                    card_detected=True,
+                    card_detected=card_detected,
                     finger_detected=True,
                     scale_px_per_cm=px_per_cm,
                     view_angle_ok=view_angle_ok,
@@ -637,7 +637,7 @@ def measure_finger(
         card_conf,
         finger_conf,
         measurement_conf,
-        edge_method=edge_method_used if edge_method_used in ["contour", "sobel"] else "contour",
+        edge_method="sobel" if edge_method_used in ["sobel", "compare"] else "contour",
         edge_quality_confidence=edge_quality_conf,
     )
 
@@ -652,13 +652,15 @@ def measure_finger(
 
     print(f"Confidence: {confidence_breakdown['overall']:.3f} ({confidence_breakdown['level']}) "
           f"[{', '.join(conf_parts)}]")
+    if confidence_breakdown["overall"] < confidence_threshold:
+        print(f"Warning: Confidence {confidence_breakdown['overall']:.3f} is below threshold {confidence_threshold:.3f}")
 
     # Phase 9: Result visualization (always generated)
     if result_png_path is not None:
         print(f"Generating result visualization...")
 
         # Use comprehensive edge overlay (based on Sobel data) + card bounding box
-        if sobel_measurement and not sobel_failed:
+        if edge_method_used in ["sobel", "compare"] and sobel_measurement and not sobel_failed:
             edge_data = sobel_measurement["edge_data"]
             roi_bounds = sobel_measurement["roi_data"]["roi_bounds"]
             width_data = sobel_measurement["width_data"]
