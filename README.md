@@ -120,8 +120,7 @@ Notes:
 - Result image path is auto-derived: `output/result.json` -> `output/result.png`.
 
 ## Documentation map
-- Baseline docs: `doc/v0/PRD.md`, `doc/v0/Plan.md`, `doc/v0/Progress.md`
-- v1 docs: `doc/v1/PRD.md`, `doc/v1/Plan.md`, `doc/v1/Progress.md`
+- Requirement docs: `doc/v{i}/PRD.md`, `doc/v{i}/Plan.md`, `doc/v{i}/Progress.md`
 - Algorithms index: `doc/algorithms/README.md`
 - Scripts: `script/README.md`
 - Web demo: `web_demo/README.md`
