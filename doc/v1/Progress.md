@@ -121,6 +121,15 @@
   - frontend button: `Run Sample Image`
 - Goal: faster first run and clearer guidance for what kind of photos users should upload.
 
+### 2026-02-11 - Web demo single-button measurement flow
+- Simplified UI from two buttons to one primary action:
+  - removed `Run Sample Image` button
+  - kept only `Start Measurement`
+- Updated frontend submit logic:
+  - if uploaded file exists, submit to `/api/measure`
+  - otherwise submit to `/api/measure-default` using the default sample
+- Removed unused secondary button CSS and updated web demo notes accordingly.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`

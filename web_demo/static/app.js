@@ -1,6 +1,5 @@
 const form = document.getElementById("measureForm");
 const imageInput = document.getElementById("imageInput");
-const measureSampleBtn = document.getElementById("measureSampleBtn");
 const statusText = document.getElementById("statusText");
 const inputPreview = document.getElementById("inputPreview");
 const debugPreview = document.getElementById("debugPreview");
@@ -66,7 +65,7 @@ const runMeasurement = async (endpoint, formData, inputUrlFallback = "") => {
 imageInput.addEventListener("change", () => {
   const file = imageInput.files[0];
   if (!file) {
-    setStatus("Sample image loaded. Upload your own photo or run sample.");
+    setStatus("Sample image loaded. Upload your own photo or click Start Measurement.");
     if (defaultSampleUrl) {
       showImage(inputPreview, inputFrame, defaultSampleUrl);
     }
@@ -77,32 +76,25 @@ imageInput.addEventListener("change", () => {
   setStatus("Image ready. Click to start measurement.");
 });
 
-measureSampleBtn.addEventListener("click", async () => {
-  const settings = buildMeasureSettings();
-  const formData = new FormData();
-  formData.append("finger_index", settings.finger_index);
-  formData.append("edge_method", settings.edge_method);
-  await runMeasurement("/api/measure-default", formData, defaultSampleUrl);
-});
-
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const file = imageInput.files[0];
-  if (!file) {
-    setStatus("Please select an image first.");
-    return;
-  }
-
   const settings = buildMeasureSettings();
   const formData = new FormData();
   formData.append("finger_index", settings.finger_index);
   formData.append("edge_method", settings.edge_method);
-  formData.append("image", file);
-  await runMeasurement("/api/measure", formData);
+
+  const file = imageInput.files[0];
+  if (file) {
+    formData.append("image", file);
+    await runMeasurement("/api/measure", formData);
+    return;
+  }
+
+  await runMeasurement("/api/measure-default", formData, defaultSampleUrl);
 });
 
 if (defaultSampleUrl) {
   showImage(inputPreview, inputFrame, defaultSampleUrl);
-  setStatus("Sample image loaded. Upload your own photo or run sample.");
+  setStatus("Sample image loaded. Upload your own photo or click Start Measurement.");
 }
