@@ -1065,7 +1065,6 @@ def refine_edges_sobel(
     if debug_dir:
         from src.debug_observer import DebugObserver, draw_landmark_axis, draw_ring_zone_roi
         from src.debug_observer import draw_roi_extraction, draw_gradient_visualization
-        from src.debug_observer import draw_gradient_filtering_techniques
         from src.debug_observer import draw_edge_candidates, draw_filtered_edge_candidates
         from src.debug_observer import draw_selected_edges
         from src.debug_observer import draw_width_measurements, draw_outlier_detection
@@ -1117,29 +1116,6 @@ def refine_edges_sobel(
         # B.3: Gradient magnitude
         grad_mag = draw_gradient_visualization(gradient_data["gradient_magnitude"], cv2.COLORMAP_HOT)
         observer.save_stage("06_gradient_magnitude", grad_mag)
-
-        # B.3a-h: Filtering technique comparisons (for noise reduction exploration)
-        filtering_techniques = [
-            ('gaussian', '06a_filter_gaussian'),
-            ('median', '06b_filter_median'),
-            ('bilateral', '06c_filter_bilateral'),
-            ('morphology_open', '06d_filter_morph_open'),
-            ('morphology_close', '06e_filter_morph_close'),
-            ('clahe', '06f_filter_clahe'),
-            ('nlm', '06g_filter_nlm'),
-            ('unsharp', '06h_filter_unsharp'),
-        ]
-
-        for technique, filename in filtering_techniques:
-            try:
-                filtered_vis = draw_gradient_filtering_techniques(
-                    gradient_data["gradient_magnitude"],
-                    technique
-                )
-                observer.save_stage(filename, filtered_vis)
-            except Exception as e:
-                logger.debug(f"Failed to generate {technique} filter: {e}")
-                continue
 
     # Step 3: Detect edges per row
     edge_data = detect_edges_per_row(

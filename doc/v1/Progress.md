@@ -99,6 +99,13 @@
   - `05_sobel_right_to_left` now visualizes half-gated `right_to_left`
 - Goal: reduce nearby non-target finger edge contamination in Sobel mode.
 
+### 2026-02-11 - Edge debug cleanup (06a-06h removed)
+- Removed generation of experimental filter-comparison debug stages:
+  - `06a_filter_gaussian` through `06h_filter_unsharp`
+- Removed unused helper implementation from `src/debug_observer.py`:
+  - deleted `draw_gradient_filtering_techniques()`
+- Simplified Sobel debug output to core stages only (`04`, `05`, `06`, `07`, `09+`).
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`
