@@ -265,7 +265,7 @@ def extract_ring_zone_roi(
     center = zone_data["center_point"]
     direction = axis_data["direction"]
     half_height = zone_length * 0.25 # 0.5x / 2
-    half_width = zone_length * 0.75  # 1.5x / 2
+    half_width = zone_length * 0.6  # 1.5x / 2
 
     x_min = int(np.clip(center[0] - half_width, 0, w - 1))
     x_max = int(np.clip(center[0] + half_width, 0, w - 1))
