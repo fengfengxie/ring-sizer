@@ -36,6 +36,7 @@ INPUT_IMAGE=""
 OUTPUT_JSON="output/test_result.json"
 ENABLE_DEBUG=true
 SKIP_CARD=false
+FINGER_INDEX="index"
 
 # Parse arguments
 while [ $# -gt 0 ]; do
@@ -48,12 +49,29 @@ while [ $# -gt 0 ]; do
             SKIP_CARD=true
             shift
             ;;
+        --finger-index|--finger|-f)
+            if [ -z "$2" ]; then
+                echo -e "${YELLOW}Error: --finger-index requires a value: auto|index|middle|ring|pinky${NC}"
+                exit 1
+            fi
+            case "$2" in
+                auto|index|middle|ring|pinky)
+                    FINGER_INDEX="$2"
+                    ;;
+                *)
+                    echo -e "${YELLOW}Error: Invalid finger index '$2'. Use: auto|index|middle|ring|pinky${NC}"
+                    exit 1
+                    ;;
+            esac
+            shift 2
+            ;;
         --help|-h)
             echo "Usage: ./script/test.sh [OPTIONS] [IMAGE]"
             echo ""
             echo "Options:"
             echo "  --no-debug              Run without debug visualization"
             echo "  --skip-card-detection   Skip card detection (testing mode for finger segmentation)"
+            echo "  --finger-index, -f      Finger to measure: auto|index|middle|ring|pinky (default: index)"
             echo "  --help, -h              Show this help message"
             echo ""
             echo "Examples:"
@@ -61,6 +79,7 @@ while [ $# -gt 0 ]; do
             echo "  ./script/test.sh input/my_image.jpg     # Test with specific image"
             echo "  ./script/test.sh --no-debug             # Skip debug output"
             echo "  ./script/test.sh --skip-card-detection  # Test finger segmentation without card"
+            echo "  ./script/test.sh -f ring                # Measure ring finger"
             exit 0
             ;;
         *)
@@ -102,7 +121,7 @@ rm -rf output/*_debug/*
 
 # Build command
 #CMD="$PYTHON measure_finger.py --input $INPUT_IMAGE --output $OUTPUT_JSON --edge-method sobel --edge-detection-method canny_contour"
-CMD="$PYTHON measure_finger.py --input $INPUT_IMAGE --output $OUTPUT_JSON"
+CMD="$PYTHON measure_finger.py --input $INPUT_IMAGE --output $OUTPUT_JSON --finger-index $FINGER_INDEX"
 
 if [ "$ENABLE_DEBUG" = true ]; then
     CMD="$CMD --debug"
@@ -118,6 +137,7 @@ echo -e "${GREEN}Ring Sizer Quick Test${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${BLUE}Input:${NC}  $INPUT_IMAGE"
 echo -e "${BLUE}Output:${NC} $OUTPUT_JSON"
+echo -e "${BLUE}Finger:${NC} $FINGER_INDEX"
 RESULT_PNG="${OUTPUT_JSON%.json}.png"
 if [ "$ENABLE_DEBUG" = true ]; then
     echo -e "${BLUE}Debug:${NC}  enabled"
