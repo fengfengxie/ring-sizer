@@ -24,6 +24,8 @@ from measure_finger import measure_finger
 APP_ROOT = Path(__file__).resolve().parent
 UPLOAD_DIR = APP_ROOT / "uploads"
 RESULTS_DIR = APP_ROOT / "results"
+DEFAULT_SAMPLE_PATH = APP_ROOT / "static" / "examples" / "default_sample.jpg"
+DEFAULT_SAMPLE_URL = "/static/examples/default_sample.jpg"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 app = Flask(__name__)
@@ -41,7 +43,7 @@ def _save_json(path: Path, data: Dict[str, Any]) -> None:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", default_sample_url=DEFAULT_SAMPLE_URL)
 
 
 @app.route("/results/<path:filename>")
@@ -80,6 +82,42 @@ def api_measure():
     if image is None:
         return jsonify({"success": False, "error": "Failed to load image"}), 400
 
+    return _run_measurement(
+        image=image,
+        finger_index=finger_index,
+        edge_method=edge_method,
+        input_image_url=f"/uploads/{upload_name}",
+    )
+
+
+@app.route("/api/measure-default", methods=["POST"])
+def api_measure_default():
+    finger_index = request.form.get("finger_index", "index")
+    edge_method = request.form.get("edge_method", "auto")
+
+    if not DEFAULT_SAMPLE_PATH.exists():
+        return jsonify({"success": False, "error": "Default sample image not found"}), 500
+
+    image = cv2.imread(str(DEFAULT_SAMPLE_PATH))
+    if image is None:
+        return jsonify({"success": False, "error": "Failed to load default sample image"}), 500
+
+    return _run_measurement(
+        image=image,
+        finger_index=finger_index,
+        edge_method=edge_method,
+        input_image_url=DEFAULT_SAMPLE_URL,
+    )
+
+
+def _run_measurement(
+    image,
+    finger_index: str,
+    edge_method: str,
+    input_image_url: str,
+):
+    run_id = uuid.uuid4().hex[:12]
+
     result_png_name = f"{run_id}__result.png"
     result_png_path = RESULTS_DIR / result_png_name
 
@@ -99,7 +137,7 @@ def api_measure():
         "success": result.get("fail_reason") is None,
         "result": result,
         "result_image_url": f"/results/{result_png_name}",
-        "input_image_url": f"/uploads/{upload_name}",
+        "input_image_url": input_image_url,
         "result_json_url": f"/results/{result_json_name}",
     }
 

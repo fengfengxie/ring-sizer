@@ -23,3 +23,5 @@ Open `http://localhost:8000`.
 - Uploads stored in `web_demo/uploads/`
 - Results stored in `web_demo/results/`
 - Debug overlay auto-generated per request
+- Default guided sample image is at `web_demo/static/examples/default_sample.jpg`
+- You can click `Run Sample Image` for a quick-start measurement without uploading

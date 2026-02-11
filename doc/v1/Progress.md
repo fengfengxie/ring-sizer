@@ -112,6 +112,15 @@
   (arrow + text rendering), while keeping orientation normalization behavior unchanged.
 - Removed now-unused visualization constants import tied only to that stage.
 
+### 2026-02-11 - Web demo default sample quick start
+- Copied `input/sample-02-05/10.jpg` into tracked path:
+  - `web_demo/static/examples/default_sample.jpg`
+- Web demo now shows this sample as the default input preview on load.
+- Added one-click sample execution endpoint and UI flow:
+  - backend: `POST /api/measure-default`
+  - frontend button: `Run Sample Image`
+- Goal: faster first run and clearer guidance for what kind of photos users should upload.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`

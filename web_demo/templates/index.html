@@ -49,6 +49,7 @@
         </div>
 
         <button class="primary" type="submit">Start Measurement</button>
+        <button class="secondary" id="measureSampleBtn" type="button">Run Sample Image</button>
         <p class="status" id="statusText">Waiting for image…</p>
       </form>
     </div>
@@ -58,9 +59,9 @@
     <section class="preview">
       <div class="panel">
         <h2>Input Photo</h2>
-        <div class="image-frame" id="inputFrame">
-          <img id="inputPreview" alt="" />
-          <p class="placeholder">No image yet</p>
+        <div class="image-frame show" id="inputFrame">
+          <img id="inputPreview" src="{{ default_sample_url }}" alt="Default sample photo example" />
+          <p class="placeholder" style="display:none;">No image yet</p>
         </div>
       </div>
 
@@ -94,6 +95,7 @@
     </section>
   </main>
 
+  <script>window.DEFAULT_SAMPLE_URL = "{{ default_sample_url }}";</script>
   <script src="/static/app.js"></script>
 </body>
 </html>
