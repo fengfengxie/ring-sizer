@@ -26,11 +26,6 @@ from src.debug_observer import (
     draw_detection_info,
 )
 
-# Import visualization constants
-from src.viz_constants import (
-    FONT_FACE, FontScale, FontThickness, Color
-)
-
 FingerIndex = Literal["auto", "index", "middle", "ring", "pinky"]
 
 # MediaPipe hand landmark indices for each finger
@@ -242,7 +237,6 @@ def normalize_hand_orientation(
     image: np.ndarray,
     landmarks_normalized: np.ndarray,
     finger: FingerIndex = "index",
-    debug_observer: Optional[DebugObserver] = None,
 ) -> Tuple[np.ndarray, int]:
     """
     Rotate image to canonical hand orientation (wrist at bottom, fingers up).
@@ -251,7 +245,6 @@ def normalize_hand_orientation(
         image: Input BGR image
         landmarks_normalized: MediaPipe landmarks in normalized [0-1] coordinates
         finger: Which finger to use for orientation detection (default: "index")
-        debug_observer: Optional debug observer for visualization
     
     Returns:
         Tuple of (rotated_image, rotation_angle_degrees)
@@ -259,38 +252,7 @@ def normalize_hand_orientation(
     """
     # Detect hand orientation based on specified finger
     rotation_needed = detect_hand_orientation(landmarks_normalized, finger)
-    
-    # Debug: Draw orientation detection
-    if debug_observer:
-        wrist = landmarks_normalized[WRIST_LANDMARK]
-        
-        # Use specified finger for visualization, fallback to middle for "auto"
-        if finger in FINGER_LANDMARKS:
-            finger_tip = landmarks_normalized[FINGER_LANDMARKS[finger][3]]
-        else:
-            finger_tip = landmarks_normalized[FINGER_LANDMARKS["middle"][3]]
-        
-        # Convert to pixel coordinates
-        h, w = image.shape[:2]
-        wrist_px = (int(wrist[0] * w), int(wrist[1] * h))
-        tip_px = (int(finger_tip[0] * w), int(finger_tip[1] * h))
-        
-        debug_img = image.copy()
-        
-        # Draw direction arrow
-        cv2.arrowedLine(debug_img, wrist_px, tip_px, (0, 255, 255), 3, tipLength=0.3)
-        
-        # Draw text annotation with finger name
-        finger_name = finger if finger in FINGER_LANDMARKS else "middle (auto)"
-        text = f"Using {finger_name} finger: {int((360 - rotation_needed) % 360)}deg from vertical"
-        text2 = f"Rotation needed: {rotation_needed}deg CW"
-        cv2.putText(debug_img, text, (20, 40), FONT_FACE, 
-                   FontScale.LABEL, Color.YELLOW, FontThickness.LABEL)
-        cv2.putText(debug_img, text2, (20, 80), FONT_FACE,
-                   FontScale.LABEL, Color.CYAN, FontThickness.LABEL)
-        
-        debug_observer.save_stage("02a_orientation_detection", debug_img)
-    
+
     # Rotate image if needed
     if rotation_needed == 0:
         return image, 0
@@ -395,7 +357,7 @@ def segment_hand(
     
     # Now normalize orientation based on hand direction
     canonical_image, orientation_rotation = normalize_hand_orientation(
-        rotated_image, landmarks_normalized_rotated, finger, observer
+        rotated_image, landmarks_normalized_rotated, finger
     )
     
     # Update landmarks for orientation normalization

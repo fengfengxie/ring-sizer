@@ -106,6 +106,12 @@
   - deleted `draw_gradient_filtering_techniques()`
 - Simplified Sobel debug output to core stages only (`04`, `05`, `06`, `07`, `09+`).
 
+### 2026-02-11 - Finger segmentation debug cleanup (remove 02a)
+- Removed `02a_orientation_detection` debug stage from `src/finger_segmentation.py`.
+- Deleted unused orientation-overlay drawing branch in `normalize_hand_orientation()`
+  (arrow + text rendering), while keeping orientation normalization behavior unchanged.
+- Removed now-unused visualization constants import tied only to that stage.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`
