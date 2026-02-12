@@ -25,3 +25,4 @@ Open `http://localhost:8000`.
 - Debug overlay auto-generated per request
 - Default guided sample image is at `web_demo/static/examples/default_sample.jpg`
 - `Start Measurement` uses the default sample image when no upload is selected
+- Web demo enforces Sobel edge refinement only (`edge_method=sobel`)

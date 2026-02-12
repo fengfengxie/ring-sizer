@@ -67,10 +67,9 @@ const showImage = (imgEl, frameEl, url) => {
 
 const buildMeasureSettings = () => {
   const fingerSelect = form.querySelector('select[name="finger_index"]');
-  const edgeSelect = form.querySelector('select[name="edge_method"]');
   return {
     finger_index: fingerSelect ? fingerSelect.value : "index",
-    edge_method: edgeSelect ? edgeSelect.value : "auto",
+    edge_method: "sobel",
   };
 };
 

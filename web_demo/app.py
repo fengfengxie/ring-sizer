@@ -27,6 +27,7 @@ RESULTS_DIR = APP_ROOT / "results"
 DEFAULT_SAMPLE_PATH = APP_ROOT / "static" / "examples" / "default_sample.jpg"
 DEFAULT_SAMPLE_URL = "/static/examples/default_sample.jpg"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+DEMO_EDGE_METHOD = "sobel"
 
 app = Flask(__name__)
 
@@ -69,8 +70,6 @@ def api_measure():
         return jsonify({"success": False, "error": "Unsupported file type"}), 400
 
     finger_index = request.form.get("finger_index", "index")
-    edge_method = request.form.get("edge_method", "auto")
-
     run_id = uuid.uuid4().hex[:12]
     safe_name = secure_filename(file.filename)
     upload_name = f"{run_id}__{safe_name}"
@@ -85,7 +84,6 @@ def api_measure():
     return _run_measurement(
         image=image,
         finger_index=finger_index,
-        edge_method=edge_method,
         input_image_url=f"/uploads/{upload_name}",
     )
 
@@ -93,8 +91,6 @@ def api_measure():
 @app.route("/api/measure-default", methods=["POST"])
 def api_measure_default():
     finger_index = request.form.get("finger_index", "index")
-    edge_method = request.form.get("edge_method", "auto")
-
     if not DEFAULT_SAMPLE_PATH.exists():
         return jsonify({"success": False, "error": "Default sample image not found"}), 500
 
@@ -105,7 +101,6 @@ def api_measure_default():
     return _run_measurement(
         image=image,
         finger_index=finger_index,
-        edge_method=edge_method,
         input_image_url=DEFAULT_SAMPLE_URL,
     )
 
@@ -113,7 +108,6 @@ def api_measure_default():
 def _run_measurement(
     image,
     finger_index: str,
-    edge_method: str,
     input_image_url: str,
 ):
     run_id = uuid.uuid4().hex[:12]
@@ -124,7 +118,7 @@ def _run_measurement(
     result = measure_finger(
         image=image,
         finger_index=finger_index,
-        edge_method=edge_method,
+        edge_method=DEMO_EDGE_METHOD,
         result_png_path=str(result_png_path),
         save_debug=False,
     )

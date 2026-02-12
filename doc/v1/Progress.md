@@ -149,6 +149,16 @@
   - Covers prefixed v1 reasons (`quality_score_low_*`, `consistency_low_*`)
   - Preserves raw reason text in status line for diagnosability.
 
+### 2026-02-12 - Web demo Sobel-only edge method
+- Locked web UI edge selector to a single disabled option:
+  - `Sobel (Locked)`
+- Updated frontend submission defaults to always send:
+  - `edge_method=sobel`
+- Hardened backend request handling in `web_demo/app.py`:
+  - ignores client-provided edge method
+  - always runs `measure_finger(..., edge_method="sobel")`
+- Updated `web_demo/README.md` note to document Sobel-only behavior.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`
