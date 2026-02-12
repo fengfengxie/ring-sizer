@@ -159,6 +159,14 @@
   - always runs `measure_finger(..., edge_method="sobel")`
 - Updated `web_demo/README.md` note to document Sobel-only behavior.
 
+### 2026-02-12 - README live demo screenshot placement
+- Added hosted demo screenshot rendering in root `README.md`:
+  - `![Ring Size CV Web Demo Screenshot](doc/assets/ring-size-cv-demo.jpg)`
+- Moved demo image from repository root into docs assets:
+  - from `Ring-Size-CV-Demo.jpg`
+  - to `doc/assets/ring-size-cv-demo.jpg`
+- Goal: keep repository root cleaner and centralize documentation media files.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`

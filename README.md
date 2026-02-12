@@ -14,6 +14,7 @@ Local computer-vision CLI tool that measures **finger outer diameter** from a si
 ## Live Demo
 - Hugging Face Space: [https://huggingface.co/spaces/feng-x/ring-sizer](https://huggingface.co/spaces/feng-x/ring-sizer)
 - Anyone can try the hosted web demo directly in the browser.
+![Ring Size CV Web Demo Screenshot](doc/assets/ring-size-cv-demo.jpg)
 
 ## What it does
 - Detects a credit card and computes `px/cm` scale.
