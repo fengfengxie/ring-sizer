@@ -55,7 +55,10 @@ const runMeasurement = async (endpoint, formData, inputUrlFallback = "") => {
     if (data.success) {
       setStatus("Measurement complete. Results updated.");
     } else {
-      setStatus("Measurement failed. Check fail_reason.");
+      const failReason = data?.result?.fail_reason;
+      setStatus(
+        failReason ? `Measurement failed: ${failReason}` : "Measurement failed."
+      );
     }
   } catch (error) {
     setStatus("Network error. Please retry.");

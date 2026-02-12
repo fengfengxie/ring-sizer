@@ -130,6 +130,12 @@
   - otherwise submit to `/api/measure-default` using the default sample
 - Removed unused secondary button CSS and updated web demo notes accordingly.
 
+### 2026-02-12 - Web demo failure reason UX
+- Updated `web_demo/static/app.js` failure status messaging.
+- When measurement fails, UI now displays the exact `result.fail_reason` text
+  from JSON directly in the status line.
+- Kept fallback message `Measurement failed.` when `fail_reason` is missing.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`
