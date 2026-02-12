@@ -1,3 +1,12 @@
+---
+title: Ring Sizer
+emoji: "\U0001F48D"
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+---
+
 # Ring Sizer
 
 Local computer-vision CLI tool that measures **finger outer diameter** from a single image using a **credit card** as scale reference.
