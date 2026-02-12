@@ -11,6 +11,10 @@ app_port: 7860
 
 Local computer-vision CLI tool that measures **finger outer diameter** from a single image using a **credit card** as scale reference.
 
+## Live Demo
+- Hugging Face Space: [https://huggingface.co/spaces/feng-x/ring-sizer](https://huggingface.co/spaces/feng-x/ring-sizer)
+- Anyone can try the hosted web demo directly in the browser.
+
 ## What it does
 - Detects a credit card and computes `px/cm` scale.
 - Detects hand/finger with MediaPipe.
