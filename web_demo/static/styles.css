@@ -266,9 +266,14 @@ pre {
 
 .tips ul {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 0;
+  list-style: none;
   color: var(--ink-soft);
   line-height: 1.7;
+}
+
+.tips li + li {
+  margin-top: 4px;
 }
 
 @media (max-width: 960px) {

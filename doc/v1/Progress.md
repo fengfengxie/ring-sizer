@@ -136,6 +136,19 @@
   from JSON directly in the status line.
 - Kept fallback message `Measurement failed.` when `fail_reason` is missing.
 
+### 2026-02-12 - Web demo guidance + failure hint mapping
+- Updated `Photo Tips` in `web_demo/templates/index.html` to emphasize:
+  - `Turn on flash`
+  - `Keep phone parallel to table`
+  - `Include full palm in frame`
+- Updated tip list styling in `web_demo/static/styles.css` to render a clean
+  checklist-style presentation.
+- Added `fail_reason -> user-friendly hint` mapping in
+  `web_demo/static/app.js`:
+  - Covers core pipeline failure reasons (card/hand/finger/geometry/measurement)
+  - Covers prefixed v1 reasons (`quality_score_low_*`, `consistency_low_*`)
+  - Preserves raw reason text in status line for diagnosability.
+
 ## Files Most Affected in v1
 - `measure_finger.py`
 - `src/edge_refinement.py`
